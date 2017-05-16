@@ -1,0 +1,124 @@
+//////////////////////////////////////////////////////////
+//Transfer Curve Plot Macro Rev8.0                      // 
+//        by Srikanth Ganesan 11/03/09                  // 
+//                                                      // 
+//Can be used for plotting SMAN MaxNoiseAmp (CSV files only) //
+//You need:                                             //  
+//1. One CSV file with the raw data                     // 
+//////////////////////////////////////////////////////////
+
+///*debug step*/
+
+Clear Globals();
+
+/*Open one CSV file with the raw data */
+p = Pick File( "Select a CSV File with raw data", "", {"CSV Files|csv;", "All Files|*"} );
+
+CSV = Open( p, Number of Columns( 2 ), End of Field( comma ), Strip Quotes( 1 ), Labels( 1 ), Column Names Start( 1 ), Data Starts( 2 ) );
+
+
+
+dt1 = CSV;
+tempname = Char( Column Name( 2 ) );
+tabname = dt1 << get name;
+m = N Col( dt1 );
+dt1 << delete columns( Column( 3 ) );
+dt1 << delete columns( Column( 4 ) );
+
+
+
+dt1 << New Column( "Hd#" );
+Column( "Hd#" ) << data type( Character );
+dt1 << New Column( "sn" );
+Column( "sn" ) << data type( Character );
+
+colHd = Column( "Hd#" );
+colsn = Column( "sn" );
+
+Fld = "Field (Oe)";
+FSn = "Find Sn";
+Amp = "SMAN MAX Noise Amp (uV)";
+
+colField = Column( 1 );
+colFSn = Column(2);
+colAmpl = Column( 3 );
+colField << Set name( Fld );
+colFSn << Set name (FSn);
+colAmpl << Set name( Amp );
+
+n = N Row( dt1 );
+For( i = 1, i <= n, i++,
+	colsn[i] = tempname;
+	If(
+		i == 1,
+			p = 1;
+			colHd[i] = "Hd 01";,
+		i > 1,
+			If( Contains( colField[i], "Field" ) > 0,
+				p = p + 1;
+				tempname = colFSn[i - 1];
+				If( p < 10,
+					colHd[i] = "Hd 0" || Char( p ),
+					colHd[i] = "Hd " || Char( p )
+				);
+			,
+				If( p < 10,
+					colHd[i] = "Hd 0" || Char( p ),
+					colHd[i] = "Hd " || Char( p )
+				)
+			)
+	);
+
+);
+
+dt1 << Select where( Contains( colField[], "Field" ) > 0 );
+dt1 << delete rows;
+dt1 << Select where( Contains( colField[], "SR" ) > 0 );
+dt1 << delete rows;
+dt1 << delete columns( Column( 2 ) );
+
+colField << data type( Numeric ) << Modeling type( Continuous );
+colAmpl << data type( Numeric ) << Modeling type( Continuous );
+
+dt1<< Current data table;
+yscalemax = colquantile(colAmpl,.99);
+yscalemin = colquantile(colAmpl,.01);
+xscalemax = colquantile(colField,.99);
+xscalemin = colquantile(colField,.01);
+If (Abs(xscalemax) >= Abs(xscalemin), scale = Abs(xscalemax),scale = Abs(xscalemin) );
+scale = 100* ceiling(scale/100 + 0.5);
+xscalemin = -1 *scale;
+xscalemax = scale;
+
+//Creating a new table with Split data
+dt2 = dt1 << Split( Split By( colsn ), Split( colAmpl ) );
+dt2 << set name( Concat( "SMAN MAX-", tabname ) );
+dt2 << New Column( "Calculation" );
+Column( "Calculation" ) << data type( Numeric );
+
+colname = dt2 << get column names;
+
+ycol = Remove(Remove(colname,1),1);
+
+xcol = colname[2];
+grp = colname[1];
+
+// Plotting the SMAN MaxNoiseAmp
+
+X = Column(dt2,1);
+p = nrow(dt2);
+q = ncol(dt2);
+
+temp = "Graph Box(FrameSize(170,150),XScale(xscalemin,xscalemax),yScale(yscalemin,yscalemax),Double Buffer, XAxis(Show Major Grid), YAxis(Show Major Grid),
+		For(i=1,i<p,i++,line({X[i],Column(dt2,3)[i]},{X[i+1],Column(dt2,3)[i+1]});),XName(\!"Field (Oe)\!"),YName(\!"MaxNoiseAmpl (uV)\!"),text({0.8*xscalemin,0.8*yscalemax},char(ycol[" || char(1) || "])));";
+for(j=4, j<=q, j++,
+temp = temp || ", Graph Box(FrameSize(170,150),XScale(xscalemin,xscalemax),yScale(yscalemin,yscalemax),Double Buffer, XAxis(Show Major Grid), YAxis(Show Major Grid),
+					For(i=1,i<p,i++, line({X[i],Column(dt2," || char(j) || ")[i]},{X[i+1],Column(dt2," || char(j) || ")[i+1]});),XName(\!"Field (Oe)\!"),YName(\!"MaxNoiseAmpl (uV)\!"),text({0.8*xscalemin,0.8*yscalemax},char(ycol[" || char(j-2) || "])));";
+
+);
+
+pt = Eval(Parse("New Window(\!" SMAN graph \!",
+outline box(\!" Transfer Curves\!",
+Line Up Box (NCol(5)," || temp || "
+)));"
+));

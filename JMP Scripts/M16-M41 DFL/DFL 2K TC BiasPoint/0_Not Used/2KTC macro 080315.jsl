@@ -1,0 +1,307 @@
+////////////////////////////////////////////////////////////////////////////////////////////
+//2K Transvers Transfer Curve screening for DFL(RHB Failure type I(reversed butterfly);   //
+//RHB Failure type II(butterfly); Others                                                  //
+//By Yishen Cui 07/06/15                                                                  //
+//You need:                                                                               //  
+//1. One CSV file with the raw data                                                       // 
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+Clear Globals();
+
+/*Open one CSV file with the raw data */
+p = Pick File( "Select a CSV File with raw data", "", {"CSV Files|csv;", "All Files|*"} );
+
+CSV = Open( p, Number of Columns( 2 ), End of Field( comma ), Strip Quotes( 1 ), Labels( 1 ), Column Names Start( 1 ), Data Starts( 2 ) );
+
+
+
+dt1 = CSV;
+tempname = Char( Column Name( 2 ) );
+tabname = dt1 << get name;
+m = N Col( dt1 );
+For( i = 1, i <= m, i++,
+	If( i > 2,
+		dt1 << delete columns( Column( i ) );
+		i = i - 1;
+		m = m - 1;
+	);
+	
+);
+
+
+dt1 << New Column( "Hd#" );
+Column( "Hd#" ) << data type( Character );
+dt1 << New Column( "sn" );
+Column( "sn" ) << data type( Character );
+
+colHd = Column( "Hd#" );
+colsn = Column( "sn" );
+
+Fld = "Field (Oe)";
+Amp = "Amp (uV)";
+colField = Column( 1 );
+colAmpl = Column( 2 );
+colField << Set name( Fld );
+colAmpl << Set name( Amp );
+
+n = N Row( dt1 );
+For( i = 1, i <= n, i++,
+	colsn[i] = tempname;
+	If(
+		i == 1,
+			p = 1;
+			colHd[i] = "Hd 01";,
+		i > 1,
+			If( Contains( colField[i], "Field" ) > 0,
+				p = p + 1;
+				tempname = colAmpl[i - 1];
+				If( p < 10,
+					colHd[i] = "Hd 0" || Char( p ),
+					colHd[i] = "Hd " || Char( p )
+				);
+			,
+				If( p < 10,
+					colHd[i] = "Hd 0" || Char( p ),
+					colHd[i] = "Hd " || Char( p )
+				)
+			)
+	);
+
+);
+
+dt1 << Select where( Contains( colField[], "Field" ) > 0 );
+dt1 << delete rows;
+dt1 << Select where( Contains( colField[], "SR" ) > 0 );
+dt1 << delete rows;
+
+colField << data type( Numeric ) << Modeling type( Continuous );
+colAmpl << data type( Numeric ) << Modeling type( Continuous );
+
+//Creating a new table with Split data
+dt2 = dt1 << Split( Split By( colsn ), Split( colAmpl ) );
+dt2 << set name( Concat( "TC-", tabname ) );
+dt2 << New Column( "Dir" );
+Column( "Dir" ) << data type( Character );
+colDir = Column( "Dir" );
+n = Round( N Row( dt2 ) / 2 );
+
+For( i = 1, i <= N Row( dt2 ), i++,
+	If( i <= n,
+		colDir[i] = "FWD",
+		colDir[i] = "REV"
+	)
+);
+
+dt2 << Move Selected Columns( {"Dir"}, To First );
+
+
+colname = dt2 << get column names;
+
+
+NHd = N Col( dt2 ) - 3; 
+Close(dt1, no save);
+//de-spike the 2kTC
+/*
+For(m=1, m <=NHd, m++,
+    k=0;
+    For( i = 0, i <= floor(N Row( dt2 )/9), i++,
+        for( l=0, l<2, l++,
+            mean=0;
+            dev=0;
+            For(j=1, j<=9,j++,
+		        mean= Column( dt2, m + 3 )[i*9+j]+mean;
+	            );
+	        mean=mean/9;
+	        For(j=1, j<=9,j++,
+	    	    dev=power((Column( dt2, m + 3 )[i*9+j]-mean),2)+dev;
+	            );
+	        dev=sqrt(dev/9);
+	        For(j=1,j<=9,j++,
+	    	    if(Abs(Column( dt2, m + 3 )[i*9+j]-mean)>(dev),Column( dt2, m + 3 )[i*9+j]=mean,);
+	            );
+	         );
+	    
+     );
+     k=N Row(dt2)-9*i;
+     if(k!=0, 
+     	for (l=0, l<2, l++,
+     	     mean=0;
+             dev=0;
+             For(j=1, j<=k,j++,
+		         mean= Column( dt2, m + 3 )[i*9+j]+mean;
+	             );
+	         mean=mean/9;
+	         For(j=1, j<=9,j++,
+	    	     dev=power((Column( dt2, m + 3 )[i*9+j]-mean),2)+dev;
+	             );
+	         dev=sqrt(dev/9);
+	         For(j=1,j<=9,j++,
+	    	     if(Abs(Column( dt2, m + 3 )[i*9+j]-mean)>(dev),Column( dt2, m + 3 )[i*9+j]=mean,);
+                )),)
+);
+*/
+//debug
+
+/*dt3=dt2;
+
+
+For(m=1, m <=NHd, m++,
+    k=Column( dt3, m + 3 )[1];
+    For( i = 1, i <= round(N Row(dt2)/2), i++,
+        Column( dt3, m + 3 )[i]=ABS(Column( dt3, m + 3 )[i]-Column( dt3, m + 3 )[N Row(dt2)-i+1])/k;
+        );
+    );
+        
+dt3 << Select where( Contains( Dir[], "REV" ) > 0 );
+dt3 << delete rows;    
+*/
+
+//Extract key parameters from LTC
+
+dtCal = New Table( "diff_rev_fwd",
+	
+	New Column( "field", numeric ), 
+
+	New Column( "diff_rev_fwd", numeric ), 
+	
+	New Column( "diff_rev_fwd_slope", numeric ), 
+	
+	New Column( "turning point", numeric ), 
+	
+	New Column("Inte_Diff", numeric),
+
+
+	addrows( N Row( dt2 ) /2)
+);
+
+dtOut = New Table( "2kTC parameters", 
+
+ 
+	New Column( "Part_ID", Character ), 
+	
+
+	New Column( "Low-HBF-oppo", numeric ), 
+
+	New Column( "Low-HBF", numeric ), 
+     
+	New Column( "Low-HBF-asym", numeric ), 
+     
+	New Column( "Normal", numeric ), 
+	
+	New Column( "Others", numeric ), 
+	
+	New Column( "Critical field-1", numeric ), 
+	
+	New Column( "Critical field-2", numeric ), 
+	
+	New Column( "RHB_int_Pos", numeric ), 
+	
+	New Column( "RHB_int_Neg", numeric ), 
+     
+	addrows( NHd )
+);
+
+Amp_2k=0;
+
+RHB_Neg=0;
+
+RHB_Pos=0;
+
+CF=0;
+
+CF_1=-2000;
+
+CF_2=2000;
+
+inte=0;
+For( i = 1, i <= NHd, i++, 
+    
+	Column( dtOut,"Part_ID")[i] = Char( colname[i + 3] );
+    Amp_2k=Col Max(Column( dt2, 3+i ))-Col Min(Column( dt2, 3+i ));
+	For( j = 1, j <= N Row( dtCal ), j++, 
+     
+		Column( dtCal, 1 )[j] = Column( dt2, 2 )[j];
+		Column( dtCal, 2 )[j] = Column( dt2, 3+i )[j]-Column( dt2, 3+i )[N Row( dt2 )+1-j];
+		if(j<10, Column( dtCal, 3 )[j]=0, Column( dtCal, 3 )[j]=(Column( dtCal, 2 )[j]- Column( dtCal, 2 )[j-9])/(Column( dtCal, 1 )[j]- Column( dtCal, 1 )[j-9]));
+		);
+    For( n = 0, n <= floor(N Row( dtCal )/18), n++,
+            mean=0;
+            dev=0;
+            For(j=1, j<=18,j++,
+		        mean= Column( dtCal, 3 )[n*18+j]+mean;
+	            );
+	        mean=mean/18;
+	        For(j=1, j<=18,j++,
+	    	    dev=power((Column( dtCal, 3  )[n*18+j]-mean),2)+dev;
+	            );
+	        dev=sqrt(dev/18);
+	        For(j=1,j<=18,j++,
+	    	    if(Abs(Column( dtCal, 3 )[n*18+j]-mean)>(dev),Column( dtCal, 3 )[n*18+j]=mean,);
+	            );
+	    
+     );
+	For( j = 1, j <= N Row( dtCal ), j++, 
+	     if(j<19, Column( dtCal, 4 )[j]=0, Column( dtCal, 4 )[j]=abs(Column( dtCal, 3 )[j]-Column( dtCal, 3 )[j-18]));
+	     inte=inte+(Column( dtCal, 2 )[j]+Column( dtCal, 2 )[j+1])/Amp_2k/2;
+	     Column( dtCal, 5 )[j]=inte;
+	     );
+/*	For( j = 1, j < floor(N Row( dtCal )/2), j++, 
+	     if(CF_N_flag==0&Column( dtCal, 4 )[floor(N Row( dtCal )/2)+1-j]>20&((abs(Column( dtCal, 2)[floor(N Row( dtCal )/2)+1-j+5])/Amp_2k<0.2|abs(Column( dtCal, 2)[floor(N Row( dtCal )/2)+1-j-5])/Amp_2k<0.2)),CF_Neg=Column( dtCal, 1 )[floor(N Row( dtCal )/2)+1-j];CF_N_flag=1);
+	     if(CF_P_flag==0&Column( dtCal, 4 )[floor(N Row( dtCal )/2)+j]>20&((abs(Column( dtCal, 2)[floor(N Row( dtCal )/2)+j+5])/Amp_2k<0.2|abs(Column( dtCal, 2)[floor(N Row( dtCal )/2)+j-5])/Amp_2k<0.2)),CF_Pos=Column( dtCal, 1 )[floor(N Row( dtCal )/2)+j];CF_P_flag=1);
+	     );*/	
+	For( j = 1, j < N Row( dtCal ), j++, 
+	     if( CF==0&(col max(Column( dtCal, 5 ))>50|col min(Column( dtCal, 5 ))<-50) & Column( dtCal, 4 )[j]>30&(abs(Column( dtCal, 2)[j+5])/Amp_2k<0.2|abs(Column( dtCal, 2)[j-5])/Amp_2k<0.2), 
+	         CF_1=Column( dtCal, 1 )[j];CF=1););
+	 CF=0;        
+	For( j = 1, j < N Row( dtCal ), j++, 
+	     if( CF==0&(col max(Column( dtCal, 5 ))>50|col min(Column( dtCal, 5 ))<-50) & Column( dtCal, 4 )[N Row( dtCal )-j+1]>30&(abs(Column( dtCal, 2)[N Row( dtCal )-j+1+5])/Amp_2k<0.2|abs(Column( dtCal, 2)[N Row( dtCal )-j+1-5])/Amp_2k<0.2), 
+	         CF_2=Column( dtCal, 1 )[N Row( dtCal )-j+1];CF=1););
+
+	For(k0=1, Column( dtCal, 1 )[k0]<=-520, k0++, k=k0);
+	For(k=k0, Column( dtCal, 1 )[k]<-100, k++,
+		RHB_Neg=RHB_Neg+(Column( dtCal, 2 )[k]+Column( dtCal, 2 )[k+1])*(Column( dtCal, 1 )[k+1]-Column( dtCal, 1 )[k])/2;
+	);
+	RHB_Neg=RHB_Neg/Amp_2k;
+	For(k0=1, Column( dtCal, 1 )[k0]<=100, k0++,k=k0);
+	For(k1=1, Column( dtCal, 1 )[k1]<=520, k1++,k=k1);
+	For(k=k0, k<k1, k++,
+		RHB_Pos=RHB_Pos+(Column( dtCal, 2 )[k]+Column( dtCal, 2 )[k-1])*(Column( dtCal, 1 )[k]-Column( dtCal, 1 )[k-1])/2;
+	);
+	RHB_Pos=RHB_Pos/Amp_2k;
+	
+	Column( dtOut,"Critical field-1")[i] = CF_1;
+	Column( dtOut,"Critical field-2")[i] = CF_2;
+	Column( dtOut,"RHB_int_Pos")[i] = RHB_Pos;
+	Column( dtOut,"RHB_int_Neg")[i] = RHB_Neg;
+	if(abs(RHB_Neg)<50&abs(RHB_Pos)<50, Column( dtOut, "Normal" )[i]=1);
+	if(RHB_Neg<-50&RHB_Pos>50&abs(CF_1)>100&abs(CF_2)>100, Column( dtOut, "Low-HBF" )[i]=1);
+	if(RHB_Neg>50&RHB_Pos<-50&abs(CF_1)>100&abs(CF_2)>100, Column( dtOut, "Low-HBF-oppo" )[i]=1);
+	if(abs(RHB_Neg)<50&abs(RHB_Pos)>50&(abs(CF_1)<100|abs(CF_2)<100), Column( dtOut, "Low-HBF-asym" )[i]=1);
+	if(abs(RHB_Neg)>50&abs(RHB_Pos)<50&(abs(CF_1)<100|abs(CF_2)<1), Column( dtOut, "Low-HBF-asym" )[i]=1);
+	if(ismissing(Column( dtOut, "Normal" )[i])&ismissing(Column( dtOut, "Low-HBF" )[i])&ismissing(Column( dtOut, "Low-HBF-oppo" )[i])&ismissing(Column( dtOut, "Low-HBF-asym" )[i]), Column( dtOut, "Others" )[i]=1);
+	
+    RHB_Neg=0;
+
+    RHB_Pos=0;
+    
+    CF_1=-2000;
+
+    CF_2=2000;
+    
+    Amp_2k=0;
+    
+    inte=0;
+    
+    CF=0;
+    );
+ 
+New Column("Wafer",  Character, Formula(Left( :Part_ID, 4 )));
+
+Data Table(dtOut) << Summary(Group(:Wafer), Sum(:Normal),Mean(:Name("Critical field-1")),Mean(:Name("Critical field-2")));
+New Column("Hyst Occurrence(%)");
+For Each Row(
+:Name("Hyst Occurrence(%)")=100-(:Name("Sum(Normal)")/:Name( "N Rows") * 100);
+);
+
+close("diff_rev_fwd", nosave);

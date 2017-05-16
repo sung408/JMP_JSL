@@ -1,0 +1,213 @@
+﻿//////////////////////////////////////////////////////////
+//HFQST-SBR for DFL                                     // 
+//        by Yishen Cui 09/03/15                        // 
+//                                                      // 
+//Can extract Slope flipping rate with stress field     //
+//ranging from 1k to 5k                                 //
+//////////////////////////////////////////////////////////
+
+//read multiple CSV files and generate a concatenated table.
+
+p = Pick Directory("Select a Folder."); //input the folder path
+
+files = Files In Directory( p); //input the folder path
+
+For( i = 1, i <= N Items( files ), i++,
+
+                    If (i==1, CSV1=Open( Concat(p,files[i]), Column Names Start( 3 ), Data Starts( 4 ) );
+                    
+                              tabname = CSV1 << get name;
+                              New Column( "File_name" );
+                              For Each Row(
+                                        	 :File_name = tabname;
+                                           ),
+                              CSV=Open( Concat(p,files[i]), Column Names Start( 3 ), Data Starts( 4 ) );
+                    
+                              tabname = CSV << get name;
+                              New Column( "File_name" );
+                              For Each Row(
+                                        	 :File_name = tabname;
+                                           );
+                              CSV1=CSV1 << Concatenate(CSV, Append to First Table );
+                              Close( CSV, NoSave );)
+);
+dt=CSV1 << Set Name( "Main table" );
+New Column("Wafer",  Character, Formula(substr( :Part ID, 4,4 )));
+
+dt<<Move Selected Columns({"File_name","Wafer"}, To First);
+
+
+//Convert the data type into numeric from column "1.Aux Resistance (Ohm) - Static Tests_Avg." if they are not numeric. 
+/*dtc = currentdatatable();
+n = N Col( dtc );
+
+collist = dtc << get column names( string );
+
+colnumber = (Loc( collist, "1.Aux Resistance (Ohm) - Static Tests_Avg." ))[1];
+
+a=colnumber;
+b=n;
+for (i=a, i<=b, i++,
+     Column( dtc, i ) << data type( numeric )	<< modeling type( continuous );
+     );
+     
+dtc << select where(Is missing(:Name( "1.Aux Resistance (Ohm) - Static Tests_Avg." )) ==1);
+
+dtc << delete rows;
+*/
+
+//Apply the BQST Spec to the main table(M11N)
+
+DFH_R_Max=150;
+
+New Column( "MNP_410" );
+For Each Row(
+	:Name("MNP_410") = :Name( "410 Oe.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ) *:Name( "410 Oe.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ) /:Name( "410 Oe.Resistance (Ohms) - Transverse_Avg." ) /1000;
+);
+New Column( "NP_410" );
+For Each Row(
+	:Name("NP_410") = :Name( "410 Oe.Noise Amp (µV) - S.M.A.N. II Test_Max." ) *:Name( "410 Oe.Noise Amp (µV) - S.M.A.N. II Test_Max." ) /:Name( "410 Oe.Resistance (Ohms) - Transverse_Avg." ) /1000;
+);
+New Column( "NMNA_410" );
+For Each Row(
+	:Name("NMNA_410") = :Name( "410 Oe.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ) /:Name( "410 Oe.Amp At Test (µV) - Transverse_Avg." ) *100;
+);
+New Column( "NNA_410" );
+For Each Row(
+	:Name("NNA_410") = :Name( "410 Oe.Noise Amp (µV) - S.M.A.N. II Test_Max." ) /:Name( "410 Oe.Amp At Test (µV) - Transverse_Avg." ) *100;
+);
+
+New Column( "Out_of_Spec" );
+
+New Colum n( "MRR_Bad" );
+For Each Row(
+	If( :Name( "410 Oe.Resistance (Ohms) - Transverse_Avg." ) > 950 | :Name( "410 Oe.Resistance (Ohms) - Transverse_Avg." ) < 250,
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:MRR_Bad = 1;
+		;
+	)
+);
+
+
+New Column( "Amp_Bad" );
+For Each Row(
+	If(
+		:Name( "410 Oe.Amp At Test (µV) - Transverse_Avg." ) > 38000 | :
+		Name( "410 Oe.Amp At Test (µV) - Transverse_Avg." ) < 3000,
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:Amp_Bad = 1;
+	)
+);
+New Column( "Asym_Bad" );
+For Each Row(
+	If(
+		:Name( "410 Oe.Asym At Test (%) - Transverse_Avg." ) > 35 | :
+		Name( "410 Oe.Asym At Test (%) - Transverse_Avg." ) < -35,
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:Asym_Bad = 1;
+	)
+);
+New Column( "Bark_Bad" );
+For Each Row(
+	If( :Name( "410 Oe.Barkh. Jump (%) - Transverse_Avg." ) > 15,  
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:Bark_Bad = 1;
+	)
+);
+New Column( "Hyst_Bad" );
+For Each Row(
+	If( :Name( "410 Oe.Hysteresis (%) - Transverse_Avg." ) > 15,
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:Hyst_Bad = 1;
+	)
+);
+New Column( "Slope_Bad" );
+For Each Row(
+	If(
+		:Name( "410 Oe.Slope (µV/Oe) - Transverse_Avg." ) > 50 | :
+		Name( "410 Oe.Slope (µV/Oe) - Transverse_Avg." ) < 0.5,
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:Slope_Bad = 1;
+	)
+);
+New Column( "MNP_Bad");
+For Each Row(
+	If( :Name( "MNP_410" ) > 10,             
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:MNP_Bad = 1;
+	)
+		
+	);	
+New Column( "NP_Bad" );
+For Each Row(
+	If( :Name( "NP_410" ) > 3.5,        
+		:Out_of_Spec = 1;Excluded() = 1;hidden()=1;
+		:NP_Bad = 1;
+	)
+);
+New Column( "RHB_FLIP" );
+For Each Row(
+	If( :Name( "1K out ABS.Slope (µV/Oe) - Transverse_Avg." ) <0
+	    |:Name( "2K out ABS.Slope (µV/Oe) - Transverse_Avg." ) <0
+	    |:Name( "2p5K out ABS.Slope (µV/Oe) - Transverse_Avg." ) <0
+	    |:Name( "3K out ABS.Slope (µV/Oe) - Transverse_Avg." ) <0
+	    |:Name( "4K out ABS.Slope (µV/Oe) - Transverse_Avg." ) <0
+	    |:Name( "5K out ABS.Slope (µV/Oe) - Transverse_Avg." ) <0,
+		:RHB_FLIP = 1;
+	
+		)
+	)	;	
+
+//Add e-BLP headers.
+dt<<NewColumn("DC_Noise", Numeric, Continuous,Formula((:Name("0 Oe.Amp (uV) - DC Noise_Range") / :Name("410 Oe.Amp At Test (µV) - Transverse_Avg.")) * 100),EvalFormula);
+dt<<NewColumn("e-BLP_DCN", Numeric, Continuous,Formula((:Name("+1.5T.Amp (uV) - DC Noise_Range") / :Name("410 Oe.Amp At Test (µV) - Transverse_Avg.")) * 100),EvalFormula);
+dt<<NewColumn("e-BLP_NP", Numeric, Continuous,Formula(:Name("1.5T.Noise Amp (µV) - S.M.A.N. II Test_Max.") ^ 2 / (:Name("Static Tests.MR+ MR- (Ohm) - Static Tests_Avg.") * 1000)),EvalFormula);
+dt<<NewColumn("e-BLP_MNP", Numeric, Continuous,Formula(:Name("1.5T.Max Noise Amp (µV) - S.M.A.N. II Test_Max.") ^ 2 / (:Name("Static Tests.MR+ MR- (Ohm) - Static Tests_Avg.") * 1000)),EvalFormula);
+
+dt<<NewColumn("e-BLP_Fail_Spec_DCN", Numeric, Continuous,Formula(10),EvalFormula);
+dt<<NewColumn("e-BLP_Fail_DCN", Numeric, Continuous,Formula(If(:Name("e-BLP_DCN") > :Name("e-BLP_Fail_Spec_DCN"), 1, 0)),EvalFormula);
+dt<<NewColumn("e-BLP_Fail_Spec_NP", Numeric, Continuous,Formula(2),EvalFormula);
+dt<<NewColumn("e-BLP_Fail_NP", Numeric, Continuous,Formula(If(:Name("e-BLP_NP") > :Name("e-BLP_Fail_Spec_NP"), 1, 0)),EvalFormula);
+
+	
+//convert missing value to 0
+
+dt = currentdatatable();
+
+n = N Col( dt );
+
+collist = dt << get column names( string );
+
+colnumber = (Loc( collist, "Out_of_Spec" ))[1];
+
+a=colnumber;
+
+b=n;
+
+For( i = a, i <= b, i++,
+
+  For each row (
+               if(Is Missing( Column(dt,i)[] ),Column(dt,i)[]=0)
+
+);
+);
+
+//Summarize slope flipping rate by wafer
+s1=dt<< Summary(Group(:Wafer), 
+	Sum(:RHB_FLIP),
+	Sum( :Name( "e-BLP_Fail_DCN" ) ),
+	Sum( :Name( "e-BLP_Fail_NP" ) ),
+	Median( :Name( "e-BLP_DCN" ) ),
+	Median( :Name( "e-BLP_NP" ) ),
+	Median( :Name( "e-BLP_MNP" ) )
+	);
+New Column( "Slope flipping rate %" );
+New Column( "e-BLP_FR_DCN" );
+New Column( "e-BLP_FR_NP" );
+For Each Row(
+	:Name("Slope flipping rate %")=(:Name("Sum(RHB_FLIP)")/:Name( "N Rows")) * 100;
+	:Name("e-BLP_FR_DCN")=(:Name("Sum(e-BLP_Fail_DCN)")/:Name( "N Rows")) * 100;
+	:Name("e-BLP_FR_NP")=(:Name("Sum(e-BLP_Fail_NP)")/:Name( "N Rows")) * 100;
+);
+
+s1<< Set Name( "summary" );

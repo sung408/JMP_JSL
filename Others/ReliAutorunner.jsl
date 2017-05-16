@@ -1,0 +1,89 @@
+//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//
+//                                                                  // 
+//                  Reliability Test Data Cruncher                  //
+//                                                                  //
+////////////////////////////////////////////////////////////////////// 
+// Version: 1.03 (April 25, 2013)                                   //
+// Author: Mark Aganon                                              //
+// Acknowledgements: Srikanth Ganesan / Wan Wu                      //
+// Description: This script performs data crunching for DFH rawdata // 
+//              CSV files.                                          //
+//////////////////////////////////////////////////////////////////////
+// JMP Script History                                               //
+// 1.00		Initial                                                 //
+// 1.02		Added DFH Test                                          //
+// 1.03		Beta Release (GUI version)                              //
+//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//\\//
+
+Clear Globals();
+Clear LOG();
+
+fnFilter = "rFilter.JMP";
+fnSpec = "rSpec.JMP";
+fnConfig = "rConfig.JMP";
+
+dtSpec = Open(fnSpec);
+dtSpec<<Clear Select;
+dtSpec<<Clear Column Selection;
+
+spec_list = :SPECVersion << get values;
+
+dtFilter = Open(fnFilter);
+dtFilter<<Clear Select;
+dtFilter<<Clear Column Selection;
+filter_list = :FilterVersion << get values;
+
+dtConfig = Open(fnConfig);
+Current Data Table(dtConfig);
+cfgDataDir=column("datafolder")[1];
+cfgWorkDir=column("workfolder")[1];
+cfgFilter=column("SelectedFilter")[1];
+cfgSpec=column("SelectedSPEC")[1];
+cfgSpec=column("SelectedSPEC")[1];
+cfgTest=column("test")[1];
+
+dlgMenu = Dialog( HList(
+	VList (
+		"Please update the raw data folder:",
+		HList(fRawdata=EditText(cfgDataDir,400),""),
+		"Please update the work folder:",
+		HList(fJSL=EditText(cfgWorkDir,400),""),
+		" ",
+		"Please select reliability test:",
+		HList(test_group=ComboBox(cfgTest)),		
+		"Please select SPEC:",
+		HList(spec_group=ComboBox(spec_list)),
+		"Please select Filter:",
+		HList(filter_group=ComboBox(filter_list)),
+		"Press OK when ready. ",
+	VList(
+		Button("OK"),
+		Button("Cancel")))));
+
+show(dlgMenu);
+buttonVal=dlgMenu["Button"];
+print(buttonVal);
+if(buttonVal==-1,
+	close(dtFilter, No Save);
+	close(dtSpec, No Save);
+	close(dtConfig, No Save);
+	break
+);
+
+spec_selected = dlgMenu["spec_group"];
+filter_selected = dlgMenu["filter_group"];
+
+::dirRoot = dlgMenu["fJSL"];
+::dirData = dlgMenu["fRawdata"];
+::dirLib=dirRoot||"\Lib\";									
+::dirOutput=dirRoot||"\Output\";									
+
+:Name("datafolder")[1] = dlgMenu["fRawdata"];
+:Name("workfolder")[1] = dlgMenu["fJSL"];
+
+dtConfig << Save();
+close(dtConfig,Save("rConfig.JMP"));
+
+If (cfgTest == "DFH",
+	include (dirLib||"DFH_xlsFileOpen.jsl");
+);

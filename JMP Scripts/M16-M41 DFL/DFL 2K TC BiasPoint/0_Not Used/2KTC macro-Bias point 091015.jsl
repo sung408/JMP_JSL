@@ -1,0 +1,293 @@
+﻿//////////////////////////////////////////////////////////////////////////////////////////////
+//2K Transvers Transfer Curve Bias point ---DFL                                           	//
+//By Yishen Cui 08/04/15																  	//	
+//By Liang Tu 08/25/15                                                                    	//
+//You need:                                                                               	//  
+//1. Corresponding EXCEL summary data                                                     	// 
+//																							//
+//M.Aganon	09/10/2015	Added User GUI Menu.				                                // 
+//						Use Design Matrix file for P2R by wafer								//
+//////////////////////////////////////////////////////////////////////////////////////////////
+
+
+Clear Globals ();
+Clear Log();
+
+
+RDF="";
+WF=Substr(Get Default Directory(), 2, 999);
+SBRF="";
+
+//Show dialog window.
+p = Dialog( HList(
+	VList ("DFL 2K TC Bias Point",		
+		"- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -",
+		" ",
+		"Please update the 2K TC data folder. This folder must contain separate folder by lot.",
+		rdfn=EditText(RDF,400),
+		" ",
+		"Please update the work folder. \Design_Matrix\ folder must be in this path.",
+		wfn=EditText(WF,400),
+		" ",
+		"Please update the SBR number.",
+		sbrn=EditText(SBRF,400),
+		" ",
+		HList(
+			Button("OK"),
+			Button("Cancel")
+			),
+		),		
+		));
+
+Show(p);
+bval=p["Button"];
+Print(bval);
+If(bval==-1, Break());
+
+//Check dialog information.
+errorlog="";
+If(p["rdfn"]=="",
+	errorlog="No DFL 2K TC data folder. Kindly update the path.";
+	Dialog(HList(errorlog,));
+	break(),
+	//else
+	p["sbrn"]=="",
+	errorlog="No DOE information. Kindly update number.";
+	Dialog(HList(errorlog,));
+	break(),
+	);
+
+//Define data directories and validate. 
+::dirData=p["rdfn"];   	
+::dirMatrix=p["wfn"] || "\Design_Matrix\";
+
+f=Files in directory(p["wfn"]);
+errorlog="";
+If(Contains(f,"Design_Matrix")==0,
+	errorlog="No \!"Design_Matrix\!" folder in work folder ",
+	);
+
+If (errorlog!="",
+	Dialog(HList(errorlog,));
+	break();
+	);
+
+//Define SBR number.
+::SBR=p["sbrn"];
+
+
+//Open TbD Matrix file.
+//dtTmp = New Table("TDesignMatrix_Matrix");
+//dtTmp << Save(dirMatrix||"xxx_DesignMatrix.jmp");
+//Close(dtTmp, No Save);
+
+f=Files In Directory (dirMatrix);
+errorlog="";
+If(Contains(f,SBR||"_DesignMatrix.jmp"),
+	tmp_path=dirMatrix||SBR||"_DesignMatrix.jmp",
+	//else if
+	Contains(f,SBR||"_DesignMatrix.JMP"),
+	tmp_path=dirMatrix||SBR||"_DesignMatrix.JMP",
+	//else
+	errorlog="Can't find DesignMatrix.JMP file. Kindly check JMP file.";
+	Dialog(HList(errorlog,));
+	Break(),
+	);
+
+::dtConfig=Open(tmp_path);
+
+
+p1=dirData || "\";
+//p1 = Pick Directory("Select a Folder."); //input the folder path
+folder = Files In Directory(p1);
+
+dt_summary_all = New Table( "Bias point summary", 
+	New Column( "Wafer", Character ), 	
+	New Column( "N Rows", numeric ), 
+	New Column( "Median(R0)", numeric ), 
+	New Column( "Median(Bias Point)", numeric ),  
+);
+
+Set Preferences( Excel selection( 0 ) ); 
+
+ii = 1;
+For( ii = 1, ii <= N Items( folder), ii++,
+p = Concat(p1,folder[ii], "/");
+
+files = Files In Directory( p); //input the folder path
+
+m=1;
+
+
+For( i = 1, i <= N Items( files ), i++,
+
+                    If (contains(files[i],"XLS")!=0,
+                        if (m==1, excel1=Open( Concat(p,files[i]), Worksheets("Production.1 Stat"));
+                    
+                              New Column( "File_name", Character );
+                              For Each Row(
+                                        	 :File_name = files[i];
+                                           );
+                              m=0,
+                              excel=Open( Concat(p,files[i]), Worksheets("Production.1 Stat"));
+                    
+                              New Column( "File_name", Character  );
+                              For Each Row(
+                                        	 :File_name = files[i];
+                                           );
+                              excel1=excel1 << Concatenate(excel, Append to First Table );
+                              Close( excel, NoSave );););
+);
+dt=excel1 << Set Name( "Main table" );
+ New Column("Wafer",  Character, Formula(Left( :Part ID, 4 )));
+//New Column("Wafer",  Character, Formula(folder[ii]));
+
+
+dt<<Move Selected Columns({"File_name","Wafer"}, To First);
+
+
+//Convert the data type into numeric from column "1.Aux Resistance (Ohm) - Static Tests_Avg." if they are not numeric. 
+dtc = currentdatatable();
+n = N Col( dtc );
+
+collist = dtc << get column names( string );
+
+colnumber = (Loc( collist, "MRR" ))[1];
+
+a=colnumber;
+b=n;
+for (i=a, i<=b, i++,
+     Column( dtc, i ) << data type( numeric )	<< modeling type( continuous );
+     );
+
+
+dtOut = New Table( "Bias point result", 
+
+ 
+	New Column( "Part_ID", Character ), 
+	
+	New Column( "R0", numeric ), 
+
+	New Column( "Peak to Peak Amp", numeric ), 
+	
+	New Column( "Rmin", numeric ), 
+	New Column( "dRbyR", numeric ), 
+//	New Column( "Rmax", numeric ), 
+     
+	New Column( "Bias Current", numeric ), 
+     
+//	New Column( "Bias Point", numeric ), 
+	
+	addrows( N Row( dtc ) )
+);
+
+For(i=1, i<=N Row( dtc ), i++,
+	Column( dtOut,"Part_ID")[i]=Column( dtc,"Part ID")[i];
+	);
+New Column("waf",  Character, Formula(Left( :Part_ID, 4 )), EvalFormula);
+dtOut=dtOut<<Update(With(dtConfig),Match Columns(:waf = :waf),);
+
+For(i=1, i<=N Row( dtc ), i++,
+	R_max=0;
+	R_min=0;
+	R_0=0;
+//	Column( dtOut,"Part_ID")[i]=Column( dtc,"Part ID")[i];
+	PR=Column( dtOut,"P2R")[i];
+	Column( dtOut,"R0")[i]=1/(1/Column( dtc,"MRR")[i] - 1/PR);
+	R_0= Column( dtOut,"R0")[i];
+	Column( dtOut,"Peak to Peak Amp")[i]=Column( dtc,"1.Pk-Pk Amp (uV) - Transverse_Avg.")[i];
+	Column( dtOut,"Bias Current")[i]=Column( dtc,"1.Bias Current (mA) - Transverse_Avg.")[i];
+	Column( dtOut,"Rmin")[i]= 1/(1/(-Column( dtc,"1.Min (µV) - Transverse_Avg.")[i]/Column( dtOut,"Bias Current")[i]/1000 + Column( dtc,"MRR")[i]) - 1/PR);
+//	Column( dtOut,"Rmax")[i]= Column( dtOut,"Rmin")[i]*(1+ dRbyR);
+//	Column( dtOut,"dRbyR")[i]= dRbyR;
+	Column( dtOut,"dRbyR")[i]= Column( dtOut,"A1-dRbyR")[i]/100;
+	
+	R_min= Column( dtOut,"Rmin")[i];
+//	R_max= Column( dtOut,"Rmin")[i]*(1+ dRbyR);
+	
+//	Column( dtOut,"Bias Point")[i]=(R_min-R_0)/(R_min-R_max);
+//  Column( dtOut,"Bias Point")[i]=(Column( dtOut,"Rmin")[i]-Column( dtOut,"R0")[i])/(Column( dtOut,"Rmin")[i]-Column( dtOut,"Rmax")[i]);
+	);
+
+
+
+New Column("Rmax",  Numeric, Formula(  :Rmin * (1 + :dRbyR)  ));	
+New Column("Bias Point",  Numeric, Formula( (:R0 - :Rmin) / (:Rmax - :Rmin) * 100));
+New Column("Wafer",  Character, Formula(folder[ii]));
+
+
+
+//dtc<<Close
+
+// Rmin filter, 1=Pass 0=Fail
+New Column("filter_Rmin" );
+For Each Row(
+	:Name("filter_Rmin") = :Rmin >= 500 & :Rmin <= 1000;
+);
+
+
+dtOut<<Clear Select;
+dtOut<<Clear Column Selection;
+
+// Exclude all parts that fail Rmin
+dtOut<<Select Where( filter_Rmin != 1 );
+dtOut<<Hide;
+dtOut<<Exclude;
+
+
+
+/*
+df = dtOut << Data Filter(
+Mode( Select(1), Show(0), Include(1) ),
+Add Filter(
+columns( :Rmin ),
+Where( :Rmin >= 500 & :Rmin <= 1000 ),
+//Where( :Bias Point >= 5 & :Bias Point <= 95 )
+)
+);
+*/
+
+//close(df, No Save);
+close(dtc, No Save);
+
+if (ii==1,
+(summDt = dtOut <<Summary(
+Group(Wafer),
+Median(R0, Bias Point),
+output table name("Median Bias Point"));
+//summDt << save();
+//df<<close;
+
+dt_summary_all = dt_summary_all  << Concatenate(summDt, Append to first table,  output table name("Median Bias Point"));
+close(summDt, No Save);
+p_save = Concat(p, "DataTable.jmp");
+close(dtOut, save(p_save));
+//p_save = Concat(p, "DataTable.jmp");
+//close(dtOut, save(p_save));
+//close(summDt, No Save);
+),
+ii>1,
+(summDt1 = dtOut <<Summary(
+Group(Wafer),
+Median(R0, Bias Point));
+
+//dtOut << save("Summary Table.txt", Text);
+
+//summDt = summDt  << Concatenate(summDt1, Append to first table,  output table name("Median Bias Point"));
+dt_summary_all = dt_summary_all  << Concatenate(summDt1, Append to first table,  output table name("Median Bias Point"));
+
+close(summDt1, No Save);
+
+p_save = Concat(p, "DataTable.jmp");
+close(dtOut, save(p_save));
+),
+);
+
+//biv = dtOut <<Bivariate( Y( :Bias Point), X( :Rmin) );
+//close(biv, No Save);
+//biv<<close;
+
+
+);
+
+// close(dtOut, save("BP_Summary"));

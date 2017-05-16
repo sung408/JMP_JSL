@@ -1,0 +1,705 @@
+///*debug step*/ 
+// ------------------------------------------------------------------------------
+// JMP script to pull Wafer Fab QST and VDP raw data 
+// Version 5.0
+// Author: Pounraj Rathinavel
+// Date  : August 21st 2006
+// Revision History
+// --- ----- ---------- --------- --------------------------- --------------------
+// No. ePWR  When	     Who	   What				By
+// --- ----- ---------- --------- ---------------------------	--------------------
+// 1.1 A1051 02/23/2007 Pounraj R Add Lot, Dates and Product   Prakash Mani
+// 1.2       03/21/2007 Pounraj R Add Wafer Pattern Search     Prakash Mani
+// 1.3 A2833 10/12/2007 Pounraj R Option to include/exclude    Changhe Shang
+//                                QST/VDPW data
+// 1.4       11/01/2008 Pounraj R Move from Oracle to SQL Server 
+// 1.5 A5248 11/01/2008 Pounraj R Checkbox option for op#s     Prakash Mani	
+// 1.6 ????? 04/21/2011 Pounraj R Mix of 4 and 5 Product	   Guanxiong Li & Prakash	
+// -------------------------------------------------------------------------------------
+ 
+// --------- User Parameter Preparation Section ---------------------
+ls_sql = "SELECT DISTINCT SUBSTR(WPRD_PROD,1,4) AS PRODUCT_GROUP FROM WIPPRD WHERE SUBSTR(WPRD_PROD,1,1) ";
+ls_sql = ls_sql || " IN ('E','Z','C', 'F','J','H','G','L','M','N','D','S','K') ";
+ls_sql = ls_sql || " AND WPRD_FACILITY = 'RRCWF2' AND LENGTH(TRIM(WPRD_PRD_GRP_4)) in (3, 4)";
+ls_sql = ls_sql || " UNION ";
+ls_sql = ls_sql || " SELECT DISTINCT SUBSTR(WPRD_PROD,1,5) AS PRODUCT_GROUP FROM WIPPRD WHERE SUBSTR(WPRD_PROD,1,2) ";
+ls_sql = ls_sql || " IN ('SL') AND WPRD_FACILITY = 'RRCWF2'";
+ls_sql = ls_sql || " ORDER BY PRODUCT_GROUP ";
+
+dt = Open Database( "DSN=WSRAP;UID=WDFREP;PWD=WDNCF1WSRA;", ls_sql, "scratch_pad" );
+pg_matrix = PRODUCT_GROUP << Get As Matrix;
+Insert Into( pg_matrix, " ", 1 );
+Close( dt, No Save );
+// ---------- Operations listing from workstream reporting
+ls_sql = "SELECT TO_CHAR(WOPR_OPER) || '   [' || WOPR_SHORT_DESC || ']' AS OPER ";
+ls_sql = ls_sql || " FROM WIPOPR WHERE WOPR_FACILITY = 'RRCWF2'";
+ls_sql = ls_sql || " AND WOPR_LONG_DESC Like '%PROBE%'";
+ls_sql = ls_sql || " ORDER BY WOPR_OPER ";
+
+dt = Open Database( "DSN=WSRAP;UID=WDFREP;PWD=WDNCF1WSRA;", ls_sql, "op_scratch_pad" );
+op_matrix = OPER << Get As Matrix;
+Insert Into( op_matrix, " ", 1 );
+Close( dt, No Save );
+
+map = {"GEN3", "GEN4", "GEN2", "EDP", "UDP", "FEMTO"};
+
+// --------- User Input Section --------------------------
+
+p = Dialog(
+	HList(
+		VList(
+			"QST and VDP raw data pull",
+			"- - - - - - - - - - - - - - - - - - - - - - - - ",
+			"Enter wafer/lot list as comma separated string.",
+			"If wafer/lot numbers are entered then start date, end date and products are IGNORED.",
+			" ",
+			Lineup( 2,
+				"Data for",
+					Lineup( 4,
+						cbQst = Check Box( "QST", 1 ), cbQstMrw3 = Check Box( "Device TEG QST", 1 ), cbVdp = Check Box( "VDP", 0 ),
+							cbVdpMrw3 = Check Box( "Multiplex VDP", 0 )
+					),
+				" ", "",
+				"XY Co-ordinates map", cb_map = Combo Box( map ),
+				"Wafers (CSV)", wafer = EditText( "" ),
+				"Lots   (CSV)", lot = EditText( "" ),
+				"Product ", prod_group = List Box( pg_matrix ),
+				"Operation", oper = List Box( op_matrix ),
+				"Start Date (MM/DD/YYYY)", start_date = EditText( "" ),
+				"End Date (MM/DD/YYYY)", end_date = EditText( "" ),
+				" ", cb_ab = Check Box( "Remove A and B VDPW parameters", 0 ),
+				"One Wafer Pattern Search", waf = EditText( "" ),
+				VList( Button( "OK" ), Button( "Cancel" ) )
+			)
+		)
+	)
+);
+
+Show( p );
+bval = p["Button"];
+If( bval == -1, break );
+
+// ---------Get all values --------------------------
+wf = p["wafer"];
+wfp = p["waf"];
+lt = p["lot"];
+pg_sel = p["prod_group"];
+op_sel = p["oper"];
+start_date = p["start_date"];
+end_date = p["end_date"];
+ab = p["cb_ab"];
+r = p["cb_map"];
+qstChecked = p["cbQst"];
+vdpChecked = p["cbVdp"];
+qstMrw3Checked = p["cbQstMrw3"];
+vdpMrw3Checked = p["cbVdpMrw3"];
+xy = map[r];
+
+// ---- Parameter Wafer Number Include ----------------------------
+If( Length( wf ) > 0,
+	i = 1;
+	While( Munger( wf, i, "," ) > 0,
+		wf = Munger( wf, i, ",", "', '" );
+		i = Munger( wf, i, "," ) + 1;
+	);
+);
+If( Length( wf ) > 0,
+	wf = "('" || Uppercase( wf ) || "')"
+);
+
+If( Length( wfp ) > 0,
+	wfp = "'" || Uppercase( wfp ) || "%'"
+);
+
+// ---- Parameter Lot Number Include ----------------------------
+If( Length( lt ) > 0,
+	i = 1;
+	While( Munger( lt, i, "," ) > 0,
+		lt = Munger( lt, i, ",", "', '" );
+		i = Munger( lt, i, "," ) + 1;
+	);
+);
+If( Length( lt ) > 0,
+	lt = "('" || Uppercase( lt ) || "')"
+);
+
+// ---- Parameter Product ----------------------------
+pg4 = "";
+pg5 = "";
+j = N Items( pg_sel );
+For( i = 1, i <= j, i++,
+	If( Length( pg_sel[i] ) == 4,
+		pg4 = pg4 || ", '" || pg_sel[i] || "'",
+		pg5 = pg5 || ", '" || pg_sel[i] || "'"
+	)
+);
+If( Length( pg4 ) > 0,
+	pg4 = Munger( pg4, 3, Length( pg4 ) );
+	pg4 = "(" || pg4 || ")";
+);
+If( Length( pg5 ) > 0,
+	pg5 = Munger( pg5, 3, Length( pg5 ) );
+	pg5 = "(" || pg5 || ")";
+);
+
+// ---- Operation numbers ----------------------------
+operId = "";
+j = N Items( op_sel );
+For( i = 1, i <= j, i++,
+	operId = operId || ", " || Munger( op_sel[i], 1, 4 )
+);
+If( Length( operId ) > 0,
+	operId = Munger( operId, 3, Length( operId ) );
+	operId = "(" || operId || ")";
+);
+
+// ---- Validations -----------
+If( (Length( Trim( pg4 ) ) > 0 | Length( Trim( pg5 ) ) > 0) & (Length( Trim( start_date ) ) == 0 | Length( Trim( end_date ) ) == 0),
+	e = Dialog( "Error Message:", VList( "Enter start date, end date and pick products...", Button( "OK" ) ) );
+	stop;
+);
+If( Length( Trim( wf ) ) > 0 & Length( Trim( lt ) ) > 0,
+	e = Dialog( "Error Message:", VList( "Enter either wafer numbers or lot numbers. NOT BOTH OF THEM...", Button( "OK" ) ) );
+	stop;
+);
+
+If( Length( Trim( wfp ) ) > 0 & Length( Trim( lt ) ) > 0,
+	e = Dialog( "Error Message:", VList( "Enter either wafer numbers or lot numbers. NOT BOTH OF THEM...", Button( "OK" ) ) );
+	stop;
+);
+If( Length( Trim( wfp ) ) > 0 & Length( Trim( wf ) ) > 0,
+	e = Dialog( "Error Message:", VList( "Enter either wafer numbers or one wafer pattern search. NOT BOTH OF THEM...", Button( "OK" ) ) );
+	stop;
+);
+
+// ---------SQL Generation Section for mask design map  -----------------------
+ls_sql = "SELECT XY.SIDE + XY.ROW_NO + XY.COL_NO AS LABEL, XY.SIDE, XY.ROW_NO, ";
+ls_sql = ls_sql || "  XY.COL_NO, XY.X, XY.Y, ROUND(SQRT((XY.X*XY.X + XY.Y*XY.Y)/2.00)/1000.00,2) AS RADIUS";
+ls_sql = ls_sql || "  FROM EDSSWHP.dbo.DIM_HEAD_XY_CRDNTS XY ";
+ls_sql = ls_sql || " WHERE XY.PROD_TYPE = '" || xy || "' ";
+ls_sql = ls_sql || " ORDER BY  XY.SIDE, XY.ROW_NO, XY.COL_NO ";
+
+// ---------SQL Submission Section --------------------------
+map = Open Database( "DSN=EDSSPROD;UID=wdfrep;PWD=wdfrep;", ls_sql, "map" );
+
+// ------- SQL generation for QST data  ----------------------
+If( Length( wf ) > 0,
+	ls_sql = "SELECT W.WAFER_ID, V.PARAM_NAME, W.TEST_DATE, W.LOT_NUMBER, W.PRODUCT_TYPE, W.OPERATION_ID, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, ";
+	ls_sql = ls_sql || " COL_NO, MEASUREMENT, SEGMENT_NO+ROW_NO+COL_NO AS LABEL ";
+	ls_sql = ls_sql || " FROM qst.dbo.QST_WAFER W, qst.dbo.QST_VALUE V, qst.dbo.QST_SITE S ";
+	ls_sql = ls_sql || "  WHERE W.WAFER_ID IN " || wf;
+	ls_sql = ls_sql || "        AND W.FK_SUM_ID = S.FK_SUM_ID ";
+	ls_sql = ls_sql || "        AND S.SITE_ID   = V.FK_SITE_ID ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND W.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY W.WAFER_ID, V.PARAM_NAME, SEGMENT_NO, ROW_NO, COL_NO";
+);
+If( Length( wfp ) > 0,
+	ls_sql = "SELECT W.WAFER_ID, V.PARAM_NAME, W.TEST_DATE, W.LOT_NUMBER, W.PRODUCT_TYPE, W.OPERATION_ID, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, ";
+	ls_sql = ls_sql || " COL_NO, MEASUREMENT, SEGMENT_NO+ROW_NO+COL_NO AS LABEL ";
+	ls_sql = ls_sql || " FROM qst.dbo.QST_WAFER W, qst.dbo.QST_VALUE V, qst.dbo.QST_SITE S ";
+	ls_sql = ls_sql || "  WHERE W.WAFER_ID Like " || wfp;
+	ls_sql = ls_sql || "        AND W.FK_SUM_ID = S.FK_SUM_ID ";
+	ls_sql = ls_sql || "        AND S.SITE_ID   = V.FK_SITE_ID ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND W.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY W.WAFER_ID, V.PARAM_NAME, SEGMENT_NO, ROW_NO, COL_NO";
+);
+If( Length( lt ) > 0,
+	ls_sql = "SELECT W.WAFER_ID, V.PARAM_NAME, W.TEST_DATE, W.LOT_NUMBER, W.PRODUCT_TYPE, W.OPERATION_ID, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, ";
+	ls_sql = ls_sql || " COL_NO, MEASUREMENT, SEGMENT_NO+ROW_NO+COL_NO AS LABEL ";
+	ls_sql = ls_sql || " FROM qst.dbo.QST_WAFER W, qst.dbo.QST_VALUE V, qst.dbo.QST_SITE S ";
+	ls_sql = ls_sql || "  WHERE W.LOT_NUMBER IN " || lt;
+	ls_sql = ls_sql || "        AND W.FK_SUM_ID = S.FK_SUM_ID ";
+	ls_sql = ls_sql || "        AND S.SITE_ID   = V.FK_SITE_ID ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND W.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY W.WAFER_ID, V.PARAM_NAME, SEGMENT_NO, ROW_NO, COL_NO";
+);
+If( Length( pg4 ) > 0,
+	ls_sql = "SELECT W.WAFER_ID, V.PARAM_NAME, W.TEST_DATE, W.LOT_NUMBER, W.PRODUCT_TYPE, W.OPERATION_ID, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, ";
+	ls_sql = ls_sql || " COL_NO, MEASUREMENT, SEGMENT_NO+ROW_NO+COL_NO AS LABEL ";
+	ls_sql = ls_sql || " FROM qst.dbo.QST_WAFER W, qst.dbo.QST_VALUE V, qst.dbo.QST_SITE S ";
+	ls_sql = ls_sql || "  WHERE SUBSTRING(W.PRODUCT_TYPE,1,4) IN " || pg4;
+	ls_sql = ls_sql || "        AND W.FK_SUM_ID = S.FK_SUM_ID ";
+	ls_sql = ls_sql || "        AND S.SITE_ID   = V.FK_SITE_ID ";
+	ls_sql = ls_sql || "	   AND W.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM'";
+	ls_sql = ls_sql || "	   AND '" || end_date || " 12:59:59 PM'";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND W.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY W.WAFER_ID, V.PARAM_NAME, SEGMENT_NO, ROW_NO, COL_NO";
+);
+If( Length( pg5 ) > 0,
+	ls_sql = "SELECT W.WAFER_ID, V.PARAM_NAME, W.TEST_DATE, W.LOT_NUMBER, W.PRODUCT_TYPE, W.OPERATION_ID, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, ";
+	ls_sql = ls_sql || " COL_NO, MEASUREMENT, SEGMENT_NO+ROW_NO+COL_NO AS LABEL ";
+	ls_sql = ls_sql || " FROM qst.dbo.QST_WAFER W, qst.dbo.QST_VALUE V, qst.dbo.QST_SITE S ";
+	ls_sql = ls_sql || "  WHERE SUBSTRING(W.PRODUCT_TYPE,1,5) IN " || pg5;
+	ls_sql = ls_sql || "        AND W.FK_SUM_ID = S.FK_SUM_ID ";
+	ls_sql = ls_sql || "        AND S.SITE_ID   = V.FK_SITE_ID ";
+	ls_sql = ls_sql || "	   AND W.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM'";
+	ls_sql = ls_sql || "	   AND '" || end_date || " 12:59:59 PM'";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND W.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY W.WAFER_ID, V.PARAM_NAME, SEGMENT_NO, ROW_NO, COL_NO";
+);
+// ---------SQL Submission Section --------------------------
+If( qstChecked == 1,
+	dt_qst = Open Database( "DSN=WDNCFDB;UID=WDFREP;PWD=wdfrep;", ls_sql, "qst" );
+	rowCount = N Rows( dt_qst );
+	If( rowCount > 0,     
+		// Now merge with map
+		dt_qst_map = map << Join(
+			With( Data Table( "qst" ) ),
+			By Matching Columns( :SIDE = :SIDE, :ROW_NO = :ROW_NO, :COL_NO = :COL_NO ),
+			SelectWith(
+				:WAFER_ID,
+				:LOT_NUMBER,
+				:PRODUCT_TYPE,
+				:OPERATION_ID,
+				:PARAM_NAME,
+				:TEST_DATE,
+				:MEASUREMENT,
+				:SIDE,
+				:ROW_NO,
+				:COL_NO,
+				:LABEL
+			),
+			Select( :X, :Y, :RADIUS ),
+			Drop multiples( 1, 0 ),
+			Include Nonmatches( 0, 1 ),
+			Output Table( "qst_map" )
+		);
+		Column( "LABEL" ) << Label( 1 );
+		dt_qst_xy = dt_qst_map << Split(
+			Split By( :PARAM_NAME ),
+			Split( :MEASUREMENT ),
+			Group( :WAFER_ID, :LOT_NUMBER, :PRODUCT_TYPE, :OPERATION_ID, :TEST_DATE, :SIDE, :ROW_NO, :COL_NO, :LABEL, :X, :Y, :RADIUS ),
+			Output Table Name( "qst_xy" )
+		);
+		Close( dt_qst_map, No Save );
+	);
+	Close( dt_qst, No Save );
+);
+
+// ------- SQL generation for Single Wafer ----------------------
+If( Length( wf ) > 0,
+	ls_sql = "SELECT V.WAFER_ID, V.TEST_DATE, S.LOT_NUMBER, S.PRODUCT_TYPE, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, COL_NO, ";
+	ls_sql = ls_sql || " LEADS1_A, LEADS1_B, LEADS1_SHEET_R, ";
+	ls_sql = ls_sql || " LEADS2_A, LEADS2_B, LEADS2_SHEET_R, ";
+	ls_sql = ls_sql || " TRILAYER_A, TRILAYER_B,TRILAYER_SHEET_R, ";
+	ls_sql = ls_sql || " CONTECT_RES, ";
+	ls_sql = ls_sql || " DFH_A, DFH_B,DFH_R, ";
+	ls_sql = ls_sql || " L1_RESIDUAL_A,L1_RESIDUAL_B, L1_RESIDUAL_SHEET_R, ";
+	ls_sql = ls_sql || " HB_A,HB_B, HB, HB_RES_A,HB_RES_B, HB_RES,  ";
+	ls_sql = ls_sql || " TMR_A,TMR_B, TMR, TMR_RES_A,TMR_RES_B, TMR_RES, ";
+	ls_sql = ls_sql || " VDP_ELG_A,VDP_ELG_B, VDP_ELG, ";
+	ls_sql = ls_sql || " LEADS3_B,LEADS3_SHEET_R, LEADS3_A ";
+	ls_sql = ls_sql || " FROM VDP.dbo.VDP_DETAIL V, VDP.dbo.VDP_WAFER_SUMMARY S ";
+	ls_sql = ls_sql || " WHERE S.WAFER_ID IN " || wf;
+	ls_sql = ls_sql || "       AND S.WAFER_ID = V.WAFER_ID ";
+	ls_sql = ls_sql || " ORDER BY V.WAFER_ID, SEGMENT_NO, ROW_NO, COL_NO ";
+);
+If( Length( wfp ) > 0,
+	ls_sql = "SELECT V.WAFER_ID, V.TEST_DATE, S.LOT_NUMBER, S.PRODUCT_TYPE, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, COL_NO, ";
+	ls_sql = ls_sql || " LEADS1_A, LEADS1_B, LEADS1_SHEET_R, ";
+	ls_sql = ls_sql || " LEADS2_A, LEADS2_B, LEADS2_SHEET_R, ";
+	ls_sql = ls_sql || " TRILAYER_A, TRILAYER_B,TRILAYER_SHEET_R, ";
+	ls_sql = ls_sql || " CONTECT_RES, ";
+	ls_sql = ls_sql || " DFH_A, DFH_B,DFH_R, ";
+	ls_sql = ls_sql || " L1_RESIDUAL_A,L1_RESIDUAL_B, L1_RESIDUAL_SHEET_R, ";
+	ls_sql = ls_sql || " HB_A,HB_B, HB, HB_RES_A,HB_RES_B, HB_RES,  ";
+	ls_sql = ls_sql || " TMR_A,TMR_B, TMR, TMR_RES_A,TMR_RES_B, TMR_RES, ";
+	ls_sql = ls_sql || " VDP_ELG_A,VDP_ELG_B, VDP_ELG, ";
+	ls_sql = ls_sql || " LEADS3_B,LEADS3_SHEET_R, LEADS3_A ";
+	ls_sql = ls_sql || " FROM VDP.dbo.VDP_DETAIL V, VDP.dbo.VDP_WAFER_SUMMARY S ";
+	ls_sql = ls_sql || " WHERE S.WAFER_ID LIKE " || wfp;
+	ls_sql = ls_sql || "       AND S.WAFER_ID = V.WAFER_ID ";
+	ls_sql = ls_sql || " ORDER BY V.WAFER_ID, SEGMENT_NO, ROW_NO, COL_NO ";
+);
+If( Length( lt ) > 0,
+	ls_sql = "SELECT V.WAFER_ID, V.TEST_DATE, S.LOT_NUMBER, S.PRODUCT_TYPE, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, COL_NO, ";
+	ls_sql = ls_sql || " LEADS1_A, LEADS1_B, LEADS1_SHEET_R, ";
+	ls_sql = ls_sql || " LEADS2_A, LEADS2_B, LEADS2_SHEET_R, ";
+	ls_sql = ls_sql || " TRILAYER_A, TRILAYER_B,TRILAYER_SHEET_R, ";
+	ls_sql = ls_sql || " CONTECT_RES, ";
+	ls_sql = ls_sql || " DFH_A, DFH_B,DFH_R, ";
+	ls_sql = ls_sql || " L1_RESIDUAL_A,L1_RESIDUAL_B, L1_RESIDUAL_SHEET_R, ";
+	ls_sql = ls_sql || " HB_A,HB_B, HB, HB_RES_A,HB_RES_B, HB_RES,  ";
+	ls_sql = ls_sql || " TMR_A,TMR_B, TMR, TMR_RES_A,TMR_RES_B, TMR_RES, ";
+	ls_sql = ls_sql || " VDP_ELG_A,VDP_ELG_B, VDP_ELG, ";
+	ls_sql = ls_sql || " LEADS3_B,LEADS3_SHEET_R, LEADS3_A ";
+	ls_sql = ls_sql || " FROM VDP.dbo.VDP_DETAIL V, VDP.dbo.VDP_WAFER_SUMMARY S ";
+	ls_sql = ls_sql || " WHERE S.LOT_NUMBER IN " || lt;
+	ls_sql = ls_sql || "       AND S.WAFER_ID = V.WAFER_ID ";
+	ls_sql = ls_sql || " ORDER BY V.WAFER_ID, SEGMENT_NO, ROW_NO, COL_NO ";
+);
+If( Length( pg4 ) > 0,
+	ls_sql = "SELECT V.WAFER_ID, V.TEST_DATE, S.LOT_NUMBER, S.PRODUCT_TYPE, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, COL_NO, ";
+	ls_sql = ls_sql || " LEADS1_A, LEADS1_B, LEADS1_SHEET_R, ";
+	ls_sql = ls_sql || " LEADS2_A, LEADS2_B, LEADS2_SHEET_R, ";
+	ls_sql = ls_sql || " TRILAYER_A, TRILAYER_B,TRILAYER_SHEET_R, ";
+	ls_sql = ls_sql || " CONTECT_RES, ";
+	ls_sql = ls_sql || " DFH_A, DFH_B,DFH_R, ";
+	ls_sql = ls_sql || " L1_RESIDUAL_A,L1_RESIDUAL_B, L1_RESIDUAL_SHEET_R, ";
+	ls_sql = ls_sql || " HB_A,HB_B, HB, HB_RES_A,HB_RES_B, HB_RES,  ";
+	ls_sql = ls_sql || " TMR_A,TMR_B, TMR, TMR_RES_A,TMR_RES_B, TMR_RES, ";
+	ls_sql = ls_sql || " VDP_ELG_A,VDP_ELG_B, VDP_ELG, ";
+	ls_sql = ls_sql || " LEADS3_B,LEADS3_SHEET_R, LEADS3_A ";
+	ls_sql = ls_sql || " FROM VDP.dbo.VDP_DETAIL V, VDP.dbo.VDP_WAFER_SUMMARY S ";
+	ls_sql = ls_sql || " WHERE S.WAFER_ID = V.WAFER_ID ";
+	ls_sql = ls_sql || "       AND SUBSTRING(S.PRODUCT_TYPE,1,4) IN " || pg4;
+	ls_sql = ls_sql || "	  AND V.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM' ";
+	ls_sql = ls_sql || "	  AND '" || end_date || " 12:59:59 PM'";
+	ls_sql = ls_sql || " ORDER BY V.WAFER_ID, SEGMENT_NO, ROW_NO, COL_NO ";
+);
+If( Length( pg5 ) > 0,
+	ls_sql = "SELECT V.WAFER_ID, V.TEST_DATE, S.LOT_NUMBER, S.PRODUCT_TYPE, ";
+	ls_sql = ls_sql || " SEGMENT_NO AS SIDE, ROW_NO, COL_NO, ";
+	ls_sql = ls_sql || " LEADS1_A, LEADS1_B, LEADS1_SHEET_R, ";
+	ls_sql = ls_sql || " LEADS2_A, LEADS2_B, LEADS2_SHEET_R, ";
+	ls_sql = ls_sql || " TRILAYER_A, TRILAYER_B,TRILAYER_SHEET_R, ";
+	ls_sql = ls_sql || " CONTECT_RES, ";
+	ls_sql = ls_sql || " DFH_A, DFH_B,DFH_R, ";
+	ls_sql = ls_sql || " L1_RESIDUAL_A,L1_RESIDUAL_B, L1_RESIDUAL_SHEET_R, ";
+	ls_sql = ls_sql || " HB_A,HB_B, HB, HB_RES_A,HB_RES_B, HB_RES,  ";
+	ls_sql = ls_sql || " TMR_A,TMR_B, TMR, TMR_RES_A,TMR_RES_B, TMR_RES, ";
+	ls_sql = ls_sql || " VDP_ELG_A,VDP_ELG_B, VDP_ELG, ";
+	ls_sql = ls_sql || " LEADS3_B,LEADS3_SHEET_R, LEADS3_A ";
+	ls_sql = ls_sql || " FROM VDP.dbo.VDP_DETAIL V, VDP.dbo.VDP_WAFER_SUMMARY S ";
+	ls_sql = ls_sql || " WHERE S.WAFER_ID = V.WAFER_ID ";
+	ls_sql = ls_sql || "       AND SUBSTRING(S.PRODUCT_TYPE,1,5) IN " || pg5;
+	ls_sql = ls_sql || "	  AND V.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM' ";
+	ls_sql = ls_sql || "	  AND '" || end_date || " 12:59:59 PM'";
+	ls_sql = ls_sql || " ORDER BY V.WAFER_ID, SEGMENT_NO, ROW_NO, COL_NO ";
+);
+// ---------SQL Submission Section --------------------------
+If( vdpChecked == 1,
+	dt_vdp = Open Database( "DSN=WDNCFDB;UID=WDFREP;PWD=wdfrep;", ls_sql, "vdp" );
+	rowCount = N Rows( dt_vdp );
+	If( rowCount > 0,     
+		// Now merge with map
+		dt_vdp_map = map << Join(
+			With( Data Table( "vdp" ) ),
+			By Matching Columns( :SIDE = :SIDE, :ROW_NO = :ROW_NO, :COL_NO = :COL_NO ),
+			Drop multiples( 1, 0 ),
+			Include Nonmatches( 0, 1 ),
+			Output Table( "vdp_xy" )
+		)
+	);
+	Close( dt_vdp, No Save );
+);
+
+// ------- SQL generation for VDPW data  ----------------------
+If( Length( wf ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql || " D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'VDP'";
+	ls_sql = ls_sql || " AND H.WAFER_ID IN " || wf;
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY H.WAFER_ID, H.OPERATION_ID, PARAM_NAME, SIDE, ROW_NO, COL_NO";
+);
+If( Length( wfp ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql || " D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'VDP'";
+	ls_sql = ls_sql || " AND H.WAFER_ID LIKE " || wfp;
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY H.WAFER_ID, H.OPERATION_ID, PARAM_NAME, SIDE, ROW_NO, COL_NO";
+);
+If( Length( lt ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql || " D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND H.LOT_NUMBER IN " || lt;
+	ls_sql = ls_sql || " AND H.MODULENAME = 'VDP'";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY H.WAFER_ID, H.OPERATION_ID, PARAM_NAME, SIDE, ROW_NO, COL_NO";
+);
+If( Length( pg4 ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql || " D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND SUBSTRING(H.PRODUCT_TYPE,1,4) IN " || pg4;
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'VDP'";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	ls_sql = ls_sql || " AND H.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM' ";
+	ls_sql = ls_sql || " AND '" || end_date || " 12:59:59 PM' ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY H.WAFER_ID, H.OPERATION_ID, PARAM_NAME, SIDE, ROW_NO, COL_NO";
+);
+If( Length( pg5 ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql || " D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND SUBSTRING(H.PRODUCT_TYPE,1,5) IN " || pg5;
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'VDP'";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	ls_sql = ls_sql || " AND H.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM' ";
+	ls_sql = ls_sql || " AND '" || end_date || " 12:59:59 PM' ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY H.WAFER_ID, H.OPERATION_ID, PARAM_NAME, SIDE, ROW_NO, COL_NO";
+);
+
+// ---------SQL Submission Section --------------------------
+If( vdpMrw3Checked == 1,
+	dt_vdpw = Open Database( "DSN=WDNCFDB;UID=WDFREP;PWD=wdfrep;", ls_sql, "multiplex_vdp" );
+	rowCount = N Rows( dt_vdpw );
+	If( rowCount > 0,     
+		// Now merge with map
+		dt_vdpw_map = map << Join(
+			With( Data Table( "multiplex_vdp" ) ),
+			By Matching Columns( :SIDE = :SIDE, :ROW_NO = :ROW_NO, :COL_NO = :COL_NO ),
+			SelectWith(
+				:WAFER_ID,
+				:LOT_NUMBER,
+				:PRODUCT_TYPE,
+				:PARAM_NAME,
+				:OPERATION_ID,
+				:TEST_DATE,
+				:MEASUREMENT,
+				:SIDE,
+				:ROW_NO,
+				:COL_NO,
+				:LABEL
+			),
+			Select( :X, :Y, :RADIUS ),
+			Drop multiples( 1, 0 ),
+			Include Nonmatches( 0, 1 ),
+			Output Table( "multiplex_vdp_map" )
+		);
+		Column( "LABEL" ) << Label( 1 );
+		dt_vdpw_xy = dt_vdpw_map << Split(
+			Split By( :PARAM_NAME ),
+			Split( :MEASUREMENT ),
+			Group( :WAFER_ID, :LOT_NUMBER, :PRODUCT_TYPE, :OPERATION_ID, :TEST_DATE, :SIDE, :ROW_NO, :COL_NO, :LABEL, :X, :Y, :RADIUS ),
+			Output Table Name( "multiplex_vdp_xy" )
+		);
+		Close( dt_vdpw_map, No Save );
+	);
+	Close( dt_vdpw, No Save );
+);
+   
+ // ------- SQL generation for QST_MRW3 data  ----------------------
+If( Length( wf ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.DEVICE_ID, D.TEST_ID, D.TEST_NAME, D.TEST_NAME_DEVICE_ID, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql ||
+	" D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_TEG_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'QST_MRW3'";
+	ls_sql = ls_sql || " AND H.WAFER_ID IN " || wf;
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " ORDER BY H.WAFER_ID, H.OPERATION_ID, PARAM_NAME, SIDE, ROW_NO, COL_NO";
+);
+If( Length( wfp ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.DEVICE_ID, D.TEST_ID, D.TEST_NAME, D.TEST_NAME_DEVICE_ID, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql ||
+	" D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_TEG_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'QST_MRW3'";
+	ls_sql = ls_sql || " AND H.WAFER_ID LIKE " || wfp;
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+);
+If( Length( lt ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.DEVICE_ID, D.TEST_ID, D.TEST_NAME, D.TEST_NAME_DEVICE_ID, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql ||
+	" D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_TEG_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND H.LOT_NUMBER IN " || lt;
+	ls_sql = ls_sql || " AND H.MODULENAME = 'QST_MRW3'";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+);
+If( Length( pg4 ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.DEVICE_ID, D.TEST_ID, D.TEST_NAME, D.TEST_NAME_DEVICE_ID, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql ||
+	" D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_TEG_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND SUBSTRING(H.PRODUCT_TYPE,1,4) IN " || pg4;
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'QST_MRW3'";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	ls_sql = ls_sql || " AND H.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM' ";
+	ls_sql = ls_sql || " AND '" || end_date || " 12:59:59 PM' ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+);
+If( Length( pg5 ) > 0,
+	ls_sql = "SELECT H.WAFER_ID, H.OPERATION_ID, H.MODULENAME, H.TEST_DATE, H.LOT_NUMBER, H.PRODUCT_TYPE,";
+	ls_sql = ls_sql || " H.OPERATOR_ID, H.EQUIPMENT_ID, H.PROBE_CARD_SERIAL_NO, ";
+	ls_sql = ls_sql || " D.DEVICE_ID, D.TEST_ID, D.TEST_NAME, D.TEST_NAME_DEVICE_ID, ";
+	ls_sql = ls_sql || " D.PARAM_NAME, D.SIDE, D.ROW_NO,";
+	ls_sql = ls_sql ||
+	" D.COL_NO, D.MEASUREMENT, D.SIDE+D.ROW_NO+D.COL_NO AS LABEL  FROM PROBE.dbo.PROBE_HEADER H, PROBE.dbo.PROBE_TEG_MEASUREMENT D";
+	ls_sql = ls_sql || " WHERE H.WAFER_ID = D.WAFER_ID";
+	ls_sql = ls_sql || " AND H.OPERATION_ID = D.OPERATION_ID";
+	ls_sql = ls_sql || " AND SUBSTRING(H.PRODUCT_TYPE,1,5) IN " || pg5;
+	ls_sql = ls_sql || " AND H.MODULENAME = D.MODULENAME";
+	ls_sql = ls_sql || " AND H.MODULENAME = 'QST_MRW3'";
+	If( ab == 1,
+		ls_sql = ls_sql || " AND SUBSTRING(D.PARAM_NAME,LEN(D.PARAM_NAME),1) NOT IN ('A', 'B')"
+	);
+	ls_sql = ls_sql || " AND H.TEST_DATE BETWEEN '" || start_date || " 12:00:00 AM' ";
+	ls_sql = ls_sql || " AND '" || end_date || " 12:59:59 PM' ";
+	If( Length( operId ) > 0,
+		ls_sql = ls_sql || " AND H.OPERATION_ID IN " || operId
+	);
+);
+// ---------SQL Submission Section --------------------------
+If( qstMrw3Checked == 1,
+	Show( ls_sql );
+	qst_mrw3 = Open Database( "DSN=WDNCFDB;UID=WDFREP;PWD=wdfrep;", ls_sql, "qst_mrw3" );
+	rowCount = N Rows( qst_mrw3 );
+	If( rowCount > 0,     
+		// Now merge with map
+		dt_qst_mrw3_map = map << Join(
+			With( Data Table( "qst_mrw3" ) ),
+			By Matching Columns( :SIDE = :SIDE, :ROW_NO = :ROW_NO, :COL_NO = :COL_NO ),
+			SelectWith(
+				:WAFER_ID,
+				:LOT_NUMBER,
+				:PRODUCT_TYPE,
+				:EQUIPMENT_ID,
+				:PARAM_NAME,
+				:DEVICE_ID,
+				:TEST_ID,
+				:TEST_NAME,
+				:TEST_NAME_DEVICE_ID,
+				:OPERATION_ID,
+				:TEST_DATE,
+				:MEASUREMENT,
+				:SIDE,
+				:ROW_NO,
+				:COL_NO,
+				:LABEL
+			),
+			Select( :X, :Y, :RADIUS ),
+			Drop multiples( 1, 0 ),
+			Include Nonmatches( 0, 1 ),
+			Output Table( "qst_mrw3_map" )
+		);
+		Column( "LABEL" ) << Label( 1 );
+		dt_qst_mrw3_xy = dt_qst_mrw3_map << Split(
+			Split By( :PARAM_NAME ),
+			Split( :MEASUREMENT ),
+			Group(
+				:WAFER_ID,
+				:LOT_NUMBER,
+				:PRODUCT_TYPE,
+				:EQUIPMENT_ID,
+				:OPERATION_ID,
+				:DEVICE_ID,
+				:TEST_ID,
+				:TEST_NAME,
+				:TEST_NAME_DEVICE_ID,
+				:TEST_DATE,
+				:SIDE,
+				:ROW_NO,
+				:COL_NO,
+				:LABEL,
+				:X,
+				:Y,
+				:RADIUS
+			),
+			Output Table Name( "qst_mrw3_xy" )
+		);
+		Close( dt_qst_mrw3_map, No Save );
+	);
+	Close( qst_mrw3, No Save );
+); 
+  
+Close( map, No Save );

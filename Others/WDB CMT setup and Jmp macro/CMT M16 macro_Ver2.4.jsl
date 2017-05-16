@@ -1,0 +1,141 @@
+/* This is a Jmp macro to analyze 600 Oe CMT processed data (mds file ver. 2.1), 
+
+This macro will read all *.Production.1.CSV files into a CMT summary data file (each row is one slider ID), calculate MRR change and Amplitude change, apply filtering criteria
+and then summarize CMT failure rate by wafer ID. User will need to manually save the CMT summary file and CMT failure rate summary file.
+*/
+
+/*CMT data analysis Version 2.2
+Create a new column called "Lot", which is the lot number from raw CSV file name, in the format of "$Cxx" or "&Cxx".
+Data is summarized by wafer and lot
+*/
+
+/* CMT data analysis Version 2.1
+**** BE CAREFUL that if one wafer has several different designs (WIW designs, SH lots, etc), this macro will combine them together into one group
+UNLESS a new column "Group" is added into the CSV file ahead of time, and in this column different designs are labelled. 
+In that case the summary will be done over each "Group" and wafer ID ******
+*/
+
+// Open all files
+
+Folder = pick Directory("Select a Folder");
+Files = Files In Directory(Folder);
+show(Files);
+//Only keep production csv files
+for(j=1,j<=N Items(Files),j++, 
+	If (Substr(Files[j],Length(Files[j])-15,16)!= "Production.1.CSV", 
+		RemoveFrom(Files,j,1);
+		j=j-1;
+	);
+
+);
+
+Productions = {}; /* creates a empty list for storing the names of each data table */
+
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(Files),j++, 
+	Prod = Open(Concat(Folder,Files[j]));
+
+//delete extra rows caused by retest
+	Prod<<Select Where(:Part ID =="Part ID");
+	Prod<<delete rows;
+	InsertInto(Productions,Prod);
+
+//Add lot # to the data table	
+	LotNumber = 	If(Contains(Files[j], "$C"), 
+				Substr(Files[j], Contains(Files[j], "$C"), 4), 
+				If(Contains(Files[j], "&C"), 
+					Substr(Files[j], Contains(Files[j], "&C"), 4)
+				)
+			);
+	New Column("Lot", Character, Norminal);
+	For Each Row(:Lot=LotNumber);	
+);
+
+
+dt_temp=New Table();
+dt_CMTsummary = dt_temp<<Concatenate(Productions, Output Table name("CMTsummary"));
+
+Close(dt_temp, No Save);
+
+
+for(j=1, j<=N Items(Files),j++, 
+	Close(Productions[j], No Save)
+);
+
+
+//Process data, prepare for summary
+
+
+//Reduce column name length
+Column("Part ID")<<Set Name("PartID");
+Column("MRR - Production_Avg.")<<Set Name("MRR(Ohm)");
+Column("Ampl At Test(uV) - Production_Avg.")<<Set Name("Ampl At Test(uV)");
+Column("Asym At Test(%) - Production_Avg.")<<Set Name("Asym At Test(%)");
+Column("Barkh Jump(%) - Production_Avg.")<<Set Name("Barkh Jump(%)");
+Column("Hysteresis(%) - Production_Avg.")<<Set Name("Hysteresis(%)");
+Column("Slope(uV/Oe) - Production_Avg.")<<Set Name("Slope(uV/Oe)");
+
+Column("MRR0 - Production_Avg.")<<Set Name("MRR0");
+Column("Ampl0 - Production_Avg.")<<Set Name("Amp0");
+
+Column("Max(dMRR%) - Production_Avg.")<<Set Name("Max(dMRR%)");
+Column("Min(dMRR%) - Production_Avg.")<<Set Name("Min(dMRR%)");
+Column("Max(dAmp%) - Production_Avg.")<<Set Name("Max(dAmp%)");
+Column("Min(dAmp%) - Production_Avg.")<<Set Name("Min(dAmp%)");
+	
+//add calculation
+New Column("dMRR%_Max", Numeric, Continuous, Format("Best", 10), 
+	Formula(
+		If(Abs(:Name("Max(dMRR%)")) > Abs(:Name("Min(dMRR%)")), :Name("Max(dMRR%)"), :Name("Min(dMRR%)")))
+	);
+New Column("dAmp%_Max", Numeric, Continuous, Format("Best", 10), 
+	Formula(
+		If(Abs(:Name("Max(dAmp%)")) > Abs(:Name("Min(dAmp%)")), :Name("Max(dAmp%)"), :Name("Min(dAmp%)")))
+	);
+New Column("abs(dMRR%_Max)", Numeric, Continuous, Format("Best", 10), Formula(abs(:dMRR%_Max)));
+New Column("abs(dAmp%_Max)", Numeric, Continuous, Format("Best", 10), Formula(abs(:dAmp%_Max)));
+New Column("Fail_dMRR",Numeric, Continuous, Format("Best", 10), Formula(If(:abs(dMRR%_Max) > 5, 1, 0)));
+New Column("Fail_dAmp",Numeric, Continuous, Format("Best", 10), Formula(If(:abs(dAmp%_Max) > 20, 1, 0)));
+New Column("Fail_CMT",Numeric, Continuous, Format("Best", 10), Formula(If(:Fail_dMRR|:Fail_dAmp, 1, 0)));
+New Column("WaferID", Character, Norminal, Formula(Substr(:PartID, 1, 4)));
+New Column("Amp0_uV", Numeric, Continuous, Format("Best", 10), Formula(140/:MRR0*:Amp0*1000));
+
+
+dt_CMTsummary<<Run Formulas;
+
+dt_CMTsummary<<Move Selected Columns({"Lot"},To First);
+dt_CMTsummary<<Move Selected Columns({"WaferID"},To First);
+dt_CMTsummary<<Move Selected Columns({"Amp0_uV"}, After("Lot"));
+
+//filter with MRR and Amplitude
+dt_CMTsummary<<Select Where(:Name("MRR(Ohm)")>1000 | :Name("MRR(Ohm)")<200 | :Name("Ampl At Test(uV)")<3000 | :Name("Ampl At Test(uV)")>40000) ;
+dt_CMTsummary<<exclude;
+dt_CMTsummary<<hide;
+
+//Summarize CMT FR
+dt_CMTFR=dt_CMTsummary<<Summary(
+	Group(:WaferID,:Lot),
+	Mean(:Name("MRR(Ohm)")),
+	Mean(:Name("Ampl At Test(uV)")),
+	Mean(:Name("Asym At Test(%)")),
+	Std Dev(:Name("Asym At Test(%)")),
+	Mean( :Name( "Barkh Jump(%)") ),
+	Mean( :Name( "Hysteresis(%)") ),
+	Mean( :Name( "Slope(uV/Oe)") ),
+		
+	Mean( :Name( "MRR0") ),
+	Mean( :Name( "Amp0") ),
+	Mean( :Name("Amp0_uV")),
+
+	Sum( :Name("Fail_dMRR")),
+	Sum( :Name("Fail_dAmp")),
+	Sum( :Name("Fail_CMT")),
+	Output Table Name("CMT_FRsummary")
+);
+
+current data table(dt_CMTFR);
+Column("N Rows")<<Set Name("CMT N Rows");
+New Column("FR_dMRR", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_dMRR)")/:Name("CMT N Rows")*100));
+New Column("FR_dAmp", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_dAmp)")/:Name("CMT N Rows")*100));
+New Column("FR_CMT", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_CMT)")/:Name("CMT N Rows")*100));
+

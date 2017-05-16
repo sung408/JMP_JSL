@@ -1,0 +1,144 @@
+//////////////////////////////////////////////////////////
+//Transfer Curve Plot Macro Rev8.0                      // 
+//        by Srikanth Ganesan 11/03/09                  // 
+//                                                      // 
+//Can be used for plotting TC raw data (CSV files only) //
+//You need:                                             //  
+//1. One CSV file with the raw data                     // 
+//////////////////////////////////////////////////////////
+
+///*debug step*/
+
+Clear Globals();
+
+/*Open one CSV file with the raw data */
+p = Pick File(
+"Select a CSV File with raw data",
+"",
+{"CSV Files|csv;",
+"All Files|*"} );
+
+CSV = Open(p, 
+Number of Columns(2), 
+End of Field(comma), 
+Strip Quotes(1), 
+Labels(1), 
+Column Names Start(1), 
+Data Starts(2));
+
+
+
+dt1 = CSV;
+tempname = char(column name(2));
+tabname = dt1<< get name;
+m = NCol(dt1);
+For (i=1, i<=m,i++,
+	If (i>2,
+		dt1<<delete columns(Column(i));
+		i=i-1;
+		m = m-1;
+	 );
+	
+);
+
+
+dt1<<new column("Hd#"); Column("Hd#")<<data type(Character);
+dt1<<new column("sn"); Column("sn")<<data type(Character);
+
+colHd = Column("Hd#");
+colsn = Column("sn");
+
+Fld = "Freq";
+Amp = "Amp";
+colField = Column(1);
+colAmpl = Column(2);
+colField<< Set name(Fld);
+colAmpl<< Set name(Amp);
+
+n=Nrow(dt1);
+for (i=1, i<=n, i++,
+	colsn[i]=tempname;
+	if(i==1, 
+			p=1; 
+			colHd[i]="Hd 01"; ,
+   	   i>1, 
+			if(Contains(colField[i], "Freq") > 0, 
+				p=p+1; 
+				tempname = colAmpl[i-1]; 
+				if(p<10,
+						colHd[i]= "Hd 0" || char(p), 
+						colHd[i]= "Hd " || char(p) ),
+				if(p<10,
+						colHd[i]= "Hd 0" || char(p), 
+						colHd[i]= "Hd " || char(p) );
+				); 
+  	);
+
+);
+
+dt1<<Select where(Contains(colField[], "Freq") > 0);
+dt1<<delete rows;
+dt1<<Select where(Contains(colField[], "SR") > 0);
+dt1<<delete rows;
+
+colField<<data type(Numeric)<<Modeling type(Continuous);
+colAmpl<<data type(Numeric)<<Modeling type(Continuous);
+
+dt1<< Current data table;
+yscalemax = colquantile(colAmpl,.99);
+yscalemin = colquantile(colAmpl,.01);
+xscalemax = colquantile(colField,.99);
+xscalemin = 0;
+If (Abs(yscalemax) >= Abs(yscalemin), scale = Abs(yscalemax),scale = Abs(yscalemin) );
+yscalemin = -1 *scale;
+yscalemax = scale;
+If (Abs(xscalemax) >= Abs(xscalemin), scale = Abs(xscalemax),scale = Abs(xscalemin) );
+scale = 100* ceiling(scale/100 + 0.5);
+xscalemin = 0;
+xscalemax = scale;
+
+
+
+yscalemax = 50;
+yscalemin = 0;
+
+
+//Creating a new table with Split data
+dt2 = dt1<< Split(Split By( colsn), Split(colAmpl));
+dt2<<set name(Concat("TC-",tabname));
+dt2<<new column("Dir"); Column("Dir")<<data type(Character);
+colDir = Column("Dir");
+n= Round(Nrow(dt2)/2);
+
+for (i=1, i<=Nrow(dt2), i++,
+If(i<=n, colDir[i] = "FWD", colDir[i] = "REV");
+);
+
+dt2<<Move Selected Columns({"Dir"}, To First);
+
+colname = dt2<<get column names;
+
+ycol = Remove(Remove(Remove(colname,1),1),1);
+
+xcol = colname[2];
+grp = colname[1];
+
+// Plotting the TC
+
+X = Column(dt2,2);
+p = nrow(dt2);
+q = ncol(dt2);
+
+temp = "Graph Box(FrameSize(170,150),XScale(xscalemin,xscalemax),yScale(yscalemin,yscalemax),Double Buffer, XAxis(Show Major Grid), YAxis(Show Major Grid),
+		For(i=1,i<p,i++,line({X[i],Column(dt2,4)[i]},{X[i+1],Column(dt2,4)[i+1]});),XName(\!"Field (Oe)\!"),YName(\!"Ampl (uV)\!"),text({0.8*xscalemin,0.8*yscalemax},char(ycol[" || char(1) || "])));";
+for(j=5, j<=q, j++,
+temp = temp || ", Graph Box(FrameSize(170,150),XScale(xscalemin,xscalemax),yScale(yscalemin,yscalemax),Double Buffer, XAxis(Show Major Grid), YAxis(Show Major Grid),
+					For(i=1,i<p,i++, line({X[i],Column(dt2," || char(j) || ")[i]},{X[i+1],Column(dt2," || char(j) || ")[i+1]});),XName(\!"Field (Oe)\!"),YName(\!"Ampl (uV)\!"),text({0.8*xscalemin,0.8*yscalemax},char(ycol[" || char(j-3) || "])));";
+
+);
+
+pt = Eval(Parse("New Window(\!" Transfer Curve graph \!",
+outline box(\!" Transfer Curves\!",
+Line Up Box (NCol(5)," || temp || "
+)));"
+));

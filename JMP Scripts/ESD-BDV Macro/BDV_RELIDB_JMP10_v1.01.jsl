@@ -1,0 +1,547 @@
+﻿//This JMP script processes BDV XLS output files from Excel macro rev 1E. All XLS files must be place in same folder.
+//It only works on JMP10.  
+//v1.00		Initial release. Output files must follow filename "xxxxx_BDV_EX_mmddyyy_Rzzz.Processed.1.XLS"
+//v1.01		Exclude Date header in summary file. Add "XLS" or "xls" filename extension.
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Function: Load XLS processed files to JMP.
+Clear Globals ();
+Clear Log();
+
+
+//Get current Excel preference and turn off sheet selection
+xlsPref = Char( Arg( Parse( (Char( Get Preferences( Excel Selection ) )) ), 1 ) );
+Set Preferences( Excel selection( 0 ) ); 
+
+
+////////////////////////////////// Combine XLS, Result Sheet ////////////////////////////////////////
+
+//Select foldet that contains BDV XLS output files
+p = pick Directory("Select a Folder");
+f = Files In Directory(p);
+
+for(j=1,j<=N Items(f),j++, 
+	If (Substr(f[j],Length(f[j])-2,3)!= "XLS" & Substr(f[j],Length(f[j])-2,3)!= "xls",  
+		RemoveFrom(f,j,1);
+		j=j-1;
+	);
+);
+
+A = {}; /* creates a empty list for storing the names of each data table */
+B = {};
+k = {};
+  
+/*Opens each one of the XLS files and deletes all unwanted rows */
+for(j=1,j<=N Items(f),j++, 
+	xlsResult = Open(Concat(p,f[j]), Worksheets("Result"));
+	colname = {};
+	colname = xlsResult<<get Column Names(String);
+	if(Contains(colname,"SR")>0 & Contains(colname,"Serial")>0, 
+		InsertInto(A,xlsResult);
+		xlsResult<<NewColumn("DOE",Character,Formula(Substr(f[j],Length(f[j])-19,4)),EvalFormula);
+		xlsResult<<NewColumn("NBO_Tag",Character,Formula(Substr(f[j],Length(f[j])-28,8)),EvalFormula);
+		xlsResult<<NewColumn("Lot ID",Character,Formula(Left(f[j],8)),EvalFormula);,
+	//Else
+		InsertInto(B,xlsResult);
+		InsertInto(k,f[j]);
+	);
+);
+
+//Revert Excel preference to original
+//Set Preferences(Excel selection( xlsPref ));
+Set Preferences(Excel selection(1));
+
+//Concatenating the Group A files
+dt1=New Table();
+If(N Items(A)>=1, 
+	::dtResult = dt1<<Concatenate(A, Output Table name("BDV_Result"));
+	dtResult<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+//Get column header from the final table
+colheader = {};
+colheader = dtResult<<get Column Names(string);
+
+//Setting the correct column names for the errored files
+For(j=1,j<=N Items(B), j++,
+	If(Ncol(B[j])< N Items(colheader), temp =Ncol(B(j)), temp =N Items(colheader) );
+	For (i=1,i<=temp,i++,
+	Column(B[j],i)<<Set name(colheader[i]);
+	 );
+);
+
+//Concatenating the Group B files
+dt1=New Table();
+If(N Items(B)>1, 
+	dt3 = dt1<<Concatenate(B, Output Table name("Remaining Data"));
+	dt3<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+
+//checking if the column numbers are the same among all the files Group A
+flga = 0;
+for(j=1, j<=N Items(A),j++, 
+	If ((NCol(A[1]) != NCol(A[j])) & flga == 0,
+	flga = 1;
+	);
+);
+
+//Closing all the open files
+for(j=1, j<=N Items(A),j++, 
+Close(A[j], No Save);
+);
+for(j=1, j<=N Items(B),j++, 
+Close(B[j], No Save);
+);
+
+dtResult<<Select Where(Is Missing(:Name("Serial")));
+dtResult<<delete rows();
+
+wait(1);
+dtResult<<save("BDV_Result.jmp");
+Show("Load XLS files (Result) done!");
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Function: Load XLS raw files to JMP.
+
+//Get current Excel preference and turn off sheet selection
+//xlsPref = Char( Arg( Parse( (Char( Get Preferences( Excel Selection ) )) ), 1 ) );
+Set Preferences( Excel selection( 0 ) ); 
+
+
+////////////////////////////////// Combine XLS, BDV Sheet ////////////////////////////////////////
+
+//Raw BDV files must be saved on parent directory of output files.
+pRaw = Left(p,Length(p)-7);
+f = Files In Directory(pRaw);
+
+
+for(j=1,j<=N Items(f),j++, 
+	If (Substr(f[j],Length(f[j])-2,3)!= "XLS" & Substr(f[j],Length(f[j])-2,3)!= "xls", 
+		RemoveFrom(f,j,1);
+		j=j-1;
+	);
+);
+
+A = {}; /* creates a empty list for storing the names of each data table */
+B = {};
+k = {};
+
+  
+/*Opens each one of the XLS files and deletes all unwanted rows */
+for(j=1,j<=N Items(f),j++, 
+	xlsBDV = Open(Concat(pRaw,f[j]), Worksheets("Production.1 Stat"));
+	colname = {};
+	colname = xlsBDV<<get Column Names(String);
+	if(Contains(colname,"Hd")>0 & Contains(colname,"Part ID")>0, 
+		InsertInto(A,xlsBDV);
+		xlsBDV<<NewColumn("DOE",Character,Formula(Substr(f[j],Length(f[j])-7,4)),EvalFormula);
+		xlsBDV<<NewColumn("NBO_Tag",Character,Formula(Substr(f[j],Length(f[j])-16,8)),EvalFormula);
+		xlsBDV<<NewColumn("Lot ID",Character,Formula(Left(f[j],8)),EvalFormula);,
+	//Else
+		InsertInto(B,xlsBDV);
+		InsertInto(k,f[j]);
+	);
+);
+
+//Revert Excel preference to original
+//Set Preferences( Excel selection( xlsPref ) );
+Set Preferences(Excel selection(1));
+
+//Concatenating the Group A files
+dt1=New Table();
+If(N Items(A)>=1, 
+	::dtTestRaw = dt1<<Concatenate(A, Output Table name("BDV_TestRaw"));
+	dtTestRaw<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+//Get column header from the final table
+colheader = {};
+colheader = dtTestRaw<<get Column Names(string);
+
+//Setting the correct column names for the errored files
+For(j=1,j<=N Items(B), j++,
+	If(Ncol(B[j])< N Items(colheader), temp =Ncol(B(j)), temp =N Items(colheader) );
+	For (i=1,i<=temp,i++,
+	Column(B[j],i)<<Set name(colheader[i]);
+	 );
+);
+
+//Concatenating the Group B files
+dt1=New Table();
+If(N Items(B)>1, 
+	dt3 = dt1<<Concatenate(B, Output Table name("Remaining Data"));
+	dt3<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+
+//checking if the column numbers are the same among all the files Group A
+flga = 0;
+for(j=1, j<=N Items(A),j++, 
+	If ((NCol(A[1]) != NCol(A[j])) & flga == 0,
+	flga = 1;
+	);
+);
+
+//Closing all the open files
+for(j=1, j<=N Items(A),j++, 
+Close(A[j], No Save);
+);
+for(j=1, j<=N Items(B),j++, 
+Close(B[j], No Save);
+);
+
+dtTestRaw<<Select Where(Is Missing(:Name("Part ID")));
+dtTestRaw<<delete rows();
+
+wait(1);
+Show("Load XLS raw files done!");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Map Date and Setup File from dtTestRaw to dtResult.
+dtTestRaw<<Clear Select;
+dtTestRaw<<Clear Column Selection;
+
+dtMap=dtTestRaw<<Subset(Copy formula( 0 ), 
+	columns(
+		:Hd,
+		:Part ID,
+		:Setup File,
+		:Date,
+		:DOE,
+		:NBO_Tag,
+		:Lot ID,
+		),
+	Output Table Name("BDV_Map_Data"));
+
+dtResult=dtResult<<Update(With(dtMap),Match Columns(:Serial = :Part ID, :DOE = :DOE, :NBO_Tag = :NBO_Tag, :Lot ID = :Lot ID ),);
+
+Close(dtTestRaw, No Save);
+Close(dtMap, No Save);
+
+dtResult<<save("BDV_Result.jmp");
+Show("Map BDV data done.");	
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Add test information
+dtResult<<Delete Columns("SR");
+col=Column(dtResult,"Serial"); col<<Set Name("Part ID");
+col=Column(dtResult,"Ex/In Mode" ); col << Set Name( "ExIn_Mode" );
+col=Column(dtResult,"Fail_Resistanc" ); col << Set Name( "Fail_Resistance" );
+
+dtResult<<NewColumn("Test Name",Formula("BDV"),EvalFormula);
+dtResult<<NewColumn("Wafer",Formula(Substr(:Part ID, 1, 4)),EvalFormula);
+dtResult<<NewColumn("SF_Lot_ID",Formula(Substr(:Lot ID, 5,4)),EvalFormula);
+dtResult<<NewColumn("BDV_MaxVolt",Formula("1V"),EvalFormula);
+dtResult<<NewColumn("Test Condition",Character,Formula(Char(:BDV_MaxVolt)),EvalFormula);
+dtResult<<NewColumn("Spec_Revision",Character,Formula("Rev-1"),EvalFormula);
+dtResult<<NewColumn("Test_Group",Formula(:Name("Lot ID") || "_" || :NBO_Tag),EvalFormula);
+
+dtResult<<NewColumn("BDV_Fail_Spec", Numeric, Continuous,Formula(300),EvalFormula);
+dtResult<<NewColumn("BDV_Fail_Voltage", Numeric, Continuous,Formula(If( :Name( "Fail_Voltage(mV)" ) < :BDV_Fail_Spec,	1,	0)),EvalFormula);
+dtResult<<NewColumn("BDV_Fail_Physical", Numeric, Continuous,Formula(If(:Name("Physical(mV)") < :BDV_Fail_Spec, 1, 0)),EvalFormula);
+Show("Add test information done!");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Re-order columns
+
+//Re-order column headers in BDV result file
+dtResult<<Move Selected Columns({"DOE"},To First);
+dtResult<<Move Selected Columns({"Test Name"}, After("DOE"));
+dtResult<<Move Selected Columns({"Spec_Revision"}, After("Test Name"));
+dtResult<<Move Selected Columns({"Hd"}, After("Spec_Revision"));
+dtResult<<Move Selected Columns({"Part ID"}, After("Hd"));
+dtResult<<Move Selected Columns({"Wafer"}, After("Part ID"));
+dtResult<<Move Selected Columns({"Date"}, After("Wafer"));
+dtResult<<Move Selected Columns({"Lot ID"}, After("Date"));
+dtResult<<Move Selected Columns({"SF_Lot_ID"}, After("Lot ID"));
+dtResult<<Move Selected Columns({"BDV_MaxVolt"}, After("SF_Lot_ID"));
+dtResult<<Move Selected Columns({"Test Condition"}, After("BDV_MaxVolt"));
+dtResult<<Move Selected Columns({"Setup File"}, After("Test Condition"));
+dtResult<<Move Selected Columns({"NBO_Tag"}, After("Setup File"));
+dtResult<<Move Selected Columns({"BDV_Fail_Spec"}, After("NBO_Tag"));
+dtResult<<Move Selected Columns({"BDV_Fail_Voltage"}, After("BDV_Fail_Spec"));
+dtResult<<Move Selected Columns({"BDV_Fail_Physical"}, After("BDV_Fail_Voltage"));
+
+dtResult<<save("BDV_Result.jmp");
+Show("Sort columns done!"); 
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Summary by user requirement and calculate delta Yield.
+//Plot delta Yield by user requirement.
+dtFilSummary=dtResult<< Summary(
+	Group(
+		:DOE, 
+		:Test Name, 
+		:Spec_Revision, 
+		:Wafer, 
+		:SF_Lot_ID, 
+		:BDV_MaxVolt, 
+		:Test Condition, 
+//		:Date, 
+		:Name("Lot ID"), 
+		:NBO_Tag,
+		:BDV_Fail_Spec 	
+		),
+		Sum( :BDV_Fail_Voltage ),
+		Sum( :BDV_Fail_Physical ),
+		Median( :Resistance ),
+		Median( :Name( "Physical(ohm)" ) ),
+		Median( :Name( "Physical(mV)" ) ),
+		Median( :Name( "Magnetic(mV)" ) ),
+		Median( :Fail_Resistance ),
+		Median( :Name( "Fail_Voltage(mV)" ) ),
+//		Median( :SH_MC ),
+//		Median( :SH_MRR ),
+//		Median( :SH_corr ),
+		Std Dev( :Resistance ),
+		Std Dev( :Name( "Physical(ohm)" ) ),
+		Std Dev( :Name( "Physical(mV)" ) ),
+		Std Dev( :Name( "Magnetic(mV)" ) ),
+		Std Dev( :Fail_Resistance ),
+		Std Dev( :Name( "Fail_Voltage(mV)" ) ),
+//		Std Dev( :SH_MC ),
+//		Std Dev( :SH_MRR ),
+//		Std Dev( :SH_corr ),
+		Mean( :Resistance ),
+		Mean( :Name( "Physical(ohm)" ) ),
+		Mean( :Name( "Physical(mV)" ) ),
+		Mean( :Name( "Magnetic(mV)" ) ),
+		Mean( :Fail_Resistance ),
+		Mean( :Name( "Fail_Voltage(mV)" ) ),
+//		Mean( :SH_MC ),
+//		Mean( :SH_MRR ),
+//		Mean( :SH_corr ),
+		Min( :Resistance ),
+		Min( :Name( "Physical(ohm)" ) ),
+		Min( :Name( "Physical(mV)" ) ),
+		Min( :Name( "Magnetic(mV)" ) ),
+		Min( :Fail_Resistance ),
+		Min( :Name( "Fail_Voltage(mV)" ) ),
+		Output Table Name( "BDV_Summary" )	
+	);
+
+//Add BDV FR coulmns
+dtFilSummary<< New Column( "BDV_FR_Voltage",
+	Numeric,
+	Continuous,
+	Formula( :Name( "Sum(BDV_Fail_Voltage)" ) * (100 / :N Rows) ),
+	EvalFormula
+);
+dtFilSummary<< New Column( "BDV_FR_Physical",
+	Numeric,
+	Continuous,
+	Formula( :Name( "Sum(BDV_Fail_Physical)" ) * (100 / :N Rows) ),
+	EvalFormula
+);
+
+//Re-order column headers in BDV summary
+dtFilSummary<< Move Selected Columns({"Median(Fail_Voltage(mV))"},	After( "N Rows" ));
+dtFilSummary<< Move Selected Columns({"Min(Fail_Voltage(mV))"},	After( "Median(Fail_Voltage(mV))" ));
+dtFilSummary<< Move Selected Columns({"BDV_FR_Voltage"}, After( "Min(Fail_Voltage(mV))" ));
+dtFilSummary<< Move Selected Columns({"BDV_FR_Physical"}, After( "BDV_FR_Voltage" ) );
+
+dtFilSummary<<save("BDV_Summary.jmp");
+Show("BDV summary done!"); 
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Create transposed data from "BDV_Result".
+dtFilTransposed = dtResult <<
+Transpose(
+	columns(
+		:Resistance,
+		:Name("Physical(ohm)"),
+		:Name("Physical(mV)"),
+		:Name("Magnetic(mV)"),
+		:Name("Fail_Resistance"),
+		:Name("Fail_Voltage(mV)")
+	),
+	By(
+		:DOE,
+		:Test Name,
+		:Spec_Revision,
+		:Hd,
+		:Part ID,
+		:Wafer,
+		:Date,
+		:Lot ID,
+		:SF_Lot_ID,
+		:BDV_MaxVolt,
+		:Test Condition,
+		:Setup File,
+		:NBO_Tag,
+		:ExIn_Mode,
+		:Physical Mode
+	),
+	Output Table( "BDV_Transposed" )
+);
+	
+col=Column(dtFilTransposed,"Row 1"); col<<Set Name("Data");
+col=Column(dtFilTransposed,"Label"); col<<set Name("Parameter");
+//dtFilSummary<<Save("\\wdtbsan02\doe\DataFiles\Reader\"|| DOE ||"_BDV_Transposed"||".CSV");
+dtFilTransposed<<save("BDV_Transposed.jmp");
+Show("Transposed data done!");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Plot oneway analysis.
+chartOneway=dtResult<<Oneway(
+	Y( 
+		:Name("Physical(mV)"),
+		:Name("Fail_Voltage(mV)"),
+		:Name("Magnetic(mV)"),
+		:Name("Resistance")
+		),
+	X( :Test_Group ),
+	All Pairs(
+		1,
+		Confidence Quantile( 0 ),
+		LSD Threshold Matrix( 0 ),
+		Ordered Differences Report( 0 ),
+		Connecting Letters Report( 1 )
+	),
+	Quantiles( 1 ),
+	Means and Std Dev( 1 ),
+	Box Plots( 1 ),
+	Mean Diamonds( 1 ),
+	Mean Error Bars( 1 ),
+	Std Dev Lines( 1 ),
+	Comparison Circles( 1 ),
+	Points Jittered( 1 ),
+	X Axis Proportional( 0 ),
+	SendToReport(
+//		Dispatch(
+//			{},
+//			FrameBox,
+//			{DispatchSeg(
+//				Box Plot Seg( 1 ),
+//				{Box Style( "Outlier" ), Line Color( "Red" )}
+//			), DispatchSeg(
+//				Box Plot Seg( 2 ),
+//				{Box Style( "Outlier" ), Line Color( "Red" )}
+//			)}
+//		),
+		Dispatch( {"Quantiles"}, "25%", NumberColBox, {Name( "Hide/Unhide" )(1)} ),
+		Dispatch( {"Quantiles"}, "75%", NumberColBox, {Name( "Hide/Unhide" )(1)} ),
+		Dispatch(
+			{"Means and Std Deviations"},
+			"Std Err Mean",
+			NumberColBox,
+			{Name( "Hide/Unhide" )(1)}
+		),
+		Dispatch(
+			{"Means and Std Deviations"},
+			"Lower 95%",
+			NumberColBox,
+			{Name( "Hide/Unhide" )(1)}
+		),
+		Dispatch(
+			{"Means and Std Deviations"},
+			"Upper 95%",
+			NumberColBox,
+			{Name( "Hide/Unhide" )(1)}
+		)
+	)
+);
+
+Show("Oneway analysis data done!");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Function: Load XLS file to JMP.
+
+//Get current Excel preference and turn off sheet selection
+//xlsPref = Char( Arg( Parse( (Char( Get Preferences( Excel Selection ) )) ), 1 ) );
+Set Preferences( Excel selection( 0 ) ); 
+
+
+////////////////////////////////// Combine XLS, BDV Sheet ////////////////////////////////////////
+
+//Select foldet that contains BDV XLS output files
+f = Files In Directory(p);
+
+for(j=1,j<=N Items(f),j++, 
+	If (Substr(f[j],Length(f[j])-2,3)!= "XLS", 
+		RemoveFrom(f,j,1);
+		j=j-1;
+	);
+);
+
+A = {}; /* creates a empty list for storing the names of each data table */
+B = {};
+k = {};
+
+/*Opens each one of the XLS files and deletes all unwanted rows */
+for(j=1,j<=N Items(f),j++, 
+	xlsRaw = Open(Concat(p,f[j]), Worksheets("TestData"));
+	colname = {};
+	colname = xlsRaw<<get Column Names(String);
+	if(Contains(colname,"SR")>0 & Contains(colname,"Part ID")>0, 
+		InsertInto(A,xlsRaw);
+		xlsRaw<<NewColumn("DOE",Character,Formula(Substr(f[j],Length(f[j])-19,4)),EvalFormula);
+		xlsRaw<<NewColumn("NBO_Tag",Character,Formula(Substr(f[j],Length(f[j])-28,8)),EvalFormula);
+		xlsRaw<<NewColumn("Lot ID",Character,Formula(Left(f[j],8)),EvalFormula);,
+	//Else
+		InsertInto(B,xlsRaw);
+		InsertInto(k,f[j]);
+	);
+);
+
+//Revert Excel preference to original
+//Set Preferences(Excel selection( xlsPref ));
+Set Preferences(Excel selection(1));
+
+//Concatenating the Group A files
+dt1=New Table();
+If(N Items(A)>=1, 
+	::dtRaw = dt1<<Concatenate(A, Output Table name("BDV_Data"));
+	dtRaw<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+//Get column header from the final table
+colheader = {};
+colheader = dtRaw<<get Column Names(string);
+
+//Setting the correct column names for the errored files
+For(j=1,j<=N Items(B), j++,
+	If(Ncol(B[j])< N Items(colheader), temp =Ncol(B(j)), temp =N Items(colheader) );
+	For (i=1,i<=temp,i++,
+	Column(B[j],i)<<Set name(colheader[i]);
+	 );
+);
+
+//Concatenating the Group B files
+dt1=New Table();
+If(N Items(B)>1, 
+	dt3 = dt1<<Concatenate(B, Output Table name("Remaining Data"));
+	dt3<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+
+//checking if the column numbers are the same among all the files Group A
+flga = 0;
+for(j=1, j<=N Items(A),j++, 
+	If ((NCol(A[1]) != NCol(A[j])) & flga == 0,
+	flga = 1;
+	);
+);
+
+//Closing all the open files
+for(j=1, j<=N Items(A),j++, 
+Close(A[j], No Save);
+);
+for(j=1, j<=N Items(B),j++, 
+Close(B[j], No Save);
+);
+
+//Re-order column headers in BDV result file
+dtRaw<<Move Selected Columns({"DOE"},To First);
+dtRaw<<Move Selected Columns({"Lot ID"}, After("DOE"));
+dtRaw<<Move Selected Columns({"NBO_Tag"}, After("Lot ID"));
+
+dtRaw<<Select Where(Is Missing(:Name("Part ID")));
+dtRaw<<delete rows();
+
+wait(1);
+//dtRaw<<save(dirD||"BDV_raw_result.jmp");
+dtRaw<<save("BDV_Data.jmp");
+Show("Load XLS result files done!");

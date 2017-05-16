@@ -1,0 +1,487 @@
+/* This is a Jmp macro to analyze 600 Oe CMT processed data (mds file ver. 2.1), 
+
+This macro will read all *.Production.1.CSV files into a CMT summary data file (each row is one slider ID), calculate MRR change and Amplitude change, apply filtering criteria
+and then summarize CMT failure rate by wafer ID. User will need to manually save the CMT summary file and CMT failure rate summary file.
+*/
+
+/*CMT data analysis Version 2.2
+Create a new column called "Lot", which is the lot number from raw CSV file name, in the format of "$Cxx" or "&Cxx".
+Data is summarized by wafer and lot
+*/
+
+/* CMT data analysis Version 2.1
+**** BE CAREFUL that if one wafer has several different designs (WIW designs, SH lots, etc), this macro will combine them together into one group
+UNLESS a new column "Group" is added into the CSV file ahead of time, and in this column different designs are labelled. 
+In that case the summary will be done over each "Group" and wafer ID ******
+*/
+
+//CMT data analysis Version 2.2 is used as base code. Version hisotry is changed to align with RELIDB.
+//v1.00	 05.12.2015		Add dialog window to select the spec to be used in data processing.
+//						Exclude end sliders (1,2,53,54) of each bar.
+//v1.01	 05.15.2015		Align headers to Spotfire
+//v1.02	 05.28.2015		Fix FR header issue.
+
+//combined all products - script name chage to CMT_RELIDB_vX.XX
+//v1.00	 07.28.2015		Add DFL spec with high MRR and slope FR.
+//v1.01	 08.20.2015		Remove formula for "Spec" since it reset to default when data is updated.	
+//v1.02	 11.19.2015		Change BQST spec to M16CF006.
+//v1.03	 02.10.2016		Add option to use XLSX raw files.
+//						Determine normal field used in CMT setup.
+//v1.04	 02.15.2016		Update BQST Spec with "M41CF002 - Combo spec 11132014".
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Function: Define filter and spec for each product. Change the specs in this section only.
+Clear Globals ();
+Clear Log();
+
+MRR_lslM11=250;
+MRR_uslM11=950;
+AMP_lslM11=3000;
+
+MRR_lslM16=200;
+MRR_uslM16=950;
+AMP_lslM16=5000;
+
+MRR_lslM41=250;
+MRR_uslM41=950;
+AMP_lslM41=5000;
+
+MRR_lslDFL=250;
+MRR_uslDFL=1100;
+AMP_lslDFL=5000;
+
+dMRRmax=5;
+dAMPmax=20;
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Open dialog window to select spec for the analysis.
+
+RDF="";
+WF=Substr(Get Default Directory(), 2, 999);
+rbOpt1="M11PY003";
+//rbOpt1=Concat("M11: ", Char(:MRR_lslM11), "<MRR>", Char(:MRR_uslM11), "and", Char(:AMP_lslM11), "<AMP") ;
+rbOpt2="M16CF004";
+rbOpt3="M41CF002";
+rbOpt4="DFL:M41CF003(wide asym, relax MRR)";
+
+//Show dialog window.
+p = Dialog( HList(
+	VList ("CMT Data Processing, Supports all products with different field.",		
+		"- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -",
+		" ",
+		"Please update the raw data folder.",
+		"CMT CSV files and single BQST JMP data must be in this path.",
+		rdfn=EditText(RDF,400),
+		" ",
+		"Please update the work folder.",
+		wfn=EditText(WF,400),
+		" ",
+		"Please select raw file format.",
+		raw_format = RadioButtons("CSV: Production.1 Stat", "XLSX: Production.1 Stat (JMP10 or higher)"),
+		" ",
+		"Please select product filter and spec.",
+		product_type = RadioButtons(rbOpt1, rbOpt2, rbOpt3, rbOpt4),
+		" ",
+		"Map BQST data and exclude non-matching sliders?",
+		map_BQST = RadioButtons("Yes     ", "No      "),
+		" ",
+		HList(
+			Button("OK"),
+			Button("Cancel")
+			),
+		),		
+		));
+
+show(p);
+bval=p["Button"];
+print(bval);
+if(bval==-1, break());
+
+//Define dir and validate.
+::dirData=p["rdfn"];
+::dirRoot=p["wfn"];
+
+//Check if path for CMT raw data is available.
+errorlog="";
+If(dirData=="",
+	errorlog="Kindly specify folder for CMT raw CSV files."
+	);
+
+If (errorlog!="",
+	Dialog(HList(errorlog,));
+	break();
+	);
+Show("Data folder checked.");
+
+//BQST mapping. First check if there is only one file in work folder. If so, continue.
+mapBQST=p["map_BQST"];
+file_i={};
+errorlog="";
+files=Files In Directory (dirData);
+For (i=1,i<=Nitems(files),i++,
+	If (Contains(files[i],".JMP")!=0|Contains(files[i],".jmp")!=0,
+		file_i=Insert(file_i,i);
+		);
+	);
+//Show(file_i[1]);
+
+If(mapBQST==1 & Nitems(file_i)==0,
+	errorlog="No jmp file in work folder";
+	Dialog(HList(errorlog,));
+	break(),
+	//else if
+	mapBQST==1 & Nitems(file_i)>=2,
+	errorlog="More than one jmp file in work folder";
+	Dialog(HList(errorlog,));
+	break(),
+	//else
+	mapBQST==1 & Nitems(file_i)==1,
+	fileBQST=Concat(dirData,"\",files[file_i]);
+	);
+Show("Check for BQST JMP file done.");
+
+prodtype=p["product_type"];
+Match(prodtype,
+		1,(
+			SpecRev=rbOpt1;
+			lslMRR=MRR_lslM11;
+			uslMRR=MRR_uslM11;
+			lslAMP=AMP_lslM11;	
+			),
+		2,(
+			SpecRev=rbOpt2;
+			lslMRR=MRR_lslM16;
+			uslMRR=MRR_uslM16;
+			lslAMP=AMP_lslM16;	
+			),
+		3,(
+			SpecRev=rbOpt3;
+			lslMRR=MRR_lslM41;
+			uslMRR=MRR_uslM41;
+			lslAMP=AMP_lslM41;	
+			),
+		4,(
+			SpecRev=rbOpt4;
+			lslMRR=MRR_lslDFL;
+			uslMRR=MRR_uslDFL;
+			lslAMP=AMP_lslDFL;	
+			),
+	);
+
+Show(lslMRR, uslMRR, lslAMP);	
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Function: Load CSV file to JMP.
+
+// Open all files
+//Folder = pick Directory("Select a Folder");
+Folder = dirData;
+Files = Files In Directory(Folder);
+Show(Files);
+
+rawFormat=p["raw_format"];
+errorlog="";
+Match(rawFormat,
+	1,(
+		//Only keep production csv files
+		for(j=1,j<=N Items(Files),j++, 
+			If (Substr(Files[j],Length(Files[j])-15,16)!= "Production.1.CSV" & 
+				Substr(Files[j],Length(Files[j])-15,16)!= "Production.1.csv", 
+				RemoveFrom(Files,j,1);
+				j=j-1;
+				);
+			);
+			Show(Files);
+		If (N Items(Files)==0,
+			errorlog="No CSV file found. Please check raw format.";
+			Dialog(HList(errorlog,));
+			break();			
+			);	
+		),
+	2,(
+		//Only keep production xlsx files
+		for(j=1,j<=N Items(Files),j++, 
+			If (Substr(Files[j],Length(Files[j])-16,17)!= "Production.1.XLSX" & 
+				Substr(Files[j],Length(Files[j])-16,17)!= "Production.1.xlsx", 
+				RemoveFrom(Files,j,1);
+				j=j-1;
+				);
+			);
+		Show(Files);
+		If (N Items(Files)==0,
+			errorlog="No XLSX file found. Please check raw format.";
+			Dialog(HList(errorlog,));
+			break();			
+			);	
+		),
+	);
+
+
+Productions = {}; /* creates a empty list for storing the names of each data table */
+
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(Files),j++, 
+	If(rawFormat==1,
+		Prod = Open(Concat(Folder,"\",Files[j])),
+		//else if
+		rawFormat==2,
+		//Get current Excel preference and turn off sheet selection
+		xlsPref = Char( Arg( Parse( (Char( Get Preferences( Excel Selection ) )) ), 1 ) );
+		Set Preferences( Excel selection( 0 ) );
+		Prod = Open(Concat(Folder,"\",Files[j]), Worksheets("Production.1 Stat"));
+	);
+	
+
+//delete extra rows caused by retest
+	Prod<<Select Where(:Part ID =="Part ID");
+	Prod<<delete rows;
+	InsertInto(Productions,Prod);
+
+//Add lot # to the data table	
+	LotNumber = If(Contains(Files[j], "$C"), 
+					Substr(Files[j], Contains(Files[j], "$C"), 4), 
+				If(Contains(Files[j], "&C"), 
+					Substr(Files[j], Contains(Files[j], "&C"), 4)
+				)
+			);
+	New Column("SF_Lot_ID", Character, Norminal);
+	For Each Row(:SF_Lot_ID=LotNumber);	
+
+//Add Lot ID to the data table	
+	LotID = If(Contains(Files[j], "$C"), 
+					Substr(Files[j], Contains(Files[j], "$C") - 4, 8), 
+				If(Contains(Files[j], "&C"), 
+					Substr(Files[j], Contains(Files[j], "&C") - 4, 8)
+				)
+			);
+	New Column("Lot ID", Character, Norminal);
+	For Each Row(:Name("Lot ID")=LotID);	
+	
+//Add DOE to the data table		
+	DOEinfo = Left(Substr(Files[j],Length(Files[j])-22,5),1) || Right(Substr(Files[j],Length(Files[j])-22,5),3);
+	New Column("DOE", Character, Norminal);
+	For Each Row(:DOE=DOEinfo);	
+		
+ 
+//Add NBO tag to the data table		
+	NBOtag = Substr(Files[j],Length(Files[j])-31,8);
+	New Column("NBO_Tag", Character, Norminal);
+	For Each Row(:NBO_Tag=NBOtag);	
+);
+
+If(rawFormat==2,
+	//Revert Excel preference to original
+	Set Preferences(Excel selection( xlsPref ));
+	);
+
+dt_temp=New Table();
+dt_CMTsummary = dt_temp<<Concatenate(Productions, Output Table name("CMTsummary"));
+
+Close(dt_temp, No Save);
+
+for(j=1, j<=N Items(Files),j++, 
+	Close(Productions[j], No Save)
+);
+Show("Load CSV files done.");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Determine field for normal QST within CMT
+
+//Get column header from the final table
+colheader = {};
+colheader = dt_CMTsummary<<get Column Names(string);
+
+//Check BQST field used in the setup
+tmpArray={
+	"Trans520.Bias Current (mA) - Transverse_Avg.",
+	"Trans410.Bias Current (mA) - Transverse_Avg.",
+	"Trans550.Bias Current (mA) - Transverse_Avg."
+	};
+flag=0;
+for(i=1, i<=N Items(tmpArray), i++,
+	tmpField=tmpArray[i];
+	If(Contains(colheader,tmpField)>0 & flag==0,
+		normField=Substr(tmpArray[i],6,3) || " Oe";
+		flag=1,
+		//else if
+		Contains(colheader,tmpField)>0 & flag==1,
+		normField="Mix";
+		);
+	);
+Show(flag);
+
+errorlog="";
+If(flag==0,
+	errorlog="Unknown field (Oe). Kindly check setup.";
+	Dialog(HList(errorlog,));
+	Break();
+	);
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Process data, prepare for summary
+
+//Reduce column name length
+Column("MRR - Production_Avg.")<<Set Name("MRR(Ohm)");
+Column("Ampl At Test(uV) - Production_Avg.")<<Set Name("Ampl At Test(uV)");
+Column("Asym At Test(%) - Production_Avg.")<<Set Name("Asym At Test(%)");
+Column("Barkh Jump(%) - Production_Avg.")<<Set Name("Barkh Jump(%)");
+Column("Hysteresis(%) - Production_Avg.")<<Set Name("Hysteresis(%)");
+Column("Slope(uV/Oe) - Production_Avg.")<<Set Name("Slope(uV/Oe)");
+
+Column("MRR0 - Production_Avg.")<<Set Name("MRR0");
+Column("Ampl0 - Production_Avg.")<<Set Name("Amp0");
+
+Column("Max(dMRR%) - Production_Avg.")<<Set Name("Max(dMRR%)");
+Column("Min(dMRR%) - Production_Avg.")<<Set Name("Min(dMRR%)");
+Column("Max(dAmp%) - Production_Avg.")<<Set Name("Max(dAmp%)");
+Column("Min(dAmp%) - Production_Avg.")<<Set Name("Min(dAmp%)");
+	
+//add calculation
+New Column("dMRR%_Max", Numeric, Continuous, Format("Best", 10), 
+	Formula(
+		If(Abs(:Name("Max(dMRR%)")) > Abs(:Name("Min(dMRR%)")), :Name("Max(dMRR%)"), :Name("Min(dMRR%)")))
+	);
+New Column("dAmp%_Max", Numeric, Continuous, Format("Best", 10), 
+	Formula(
+		If(Abs(:Name("Max(dAmp%)")) > Abs(:Name("Min(dAmp%)")), :Name("Max(dAmp%)"), :Name("Min(dAmp%)")))
+	);
+New Column("abs(dMRR%_Max)", Numeric, Continuous, Format("Best", 10), Formula(abs(:dMRR%_Max)));
+New Column("abs(dAmp%_Max)", Numeric, Continuous, Format("Best", 10), Formula(abs(:dAmp%_Max)));
+New Column("CMT_Fail_dMRR",Numeric, Continuous, Format("Best", 10), Formula(If(:abs(dMRR%_Max) > dMRRmax, 1, 0)));
+New Column("CMT_Fail_dAmp",Numeric, Continuous, Format("Best", 10), Formula(If(:abs(dAmp%_Max) > dAMPmax, 1, 0)));
+//New Column("CMT_Fail_Total",Numeric, Continuous, Format("Best", 10), Formula(If(:CMT_Fail_dMRR|:CMT_Fail_dAmp, 1, 0)));
+New Column("Wafer", Character, Norminal, Formula(Substr(:PartID, 1, 4)));
+
+dt_CMTsummary<<Run Formulas;
+
+//add slope FR for DFL
+If(prodtype==4,
+	dt_CMTsummary<<New Column("Slope0", Numeric, Continuous, Format("Best", 10), Formula(:Name("CMT0.Slope (mOhm/Oe) - Transverse_Avg.")),EvalFormula);
+	dt_CMTsummary<<New Column("CMT_Fail_Slope",Numeric, Continuous, Format("Best", 10), Formula(If((:Name("Slope0")>0&:Name("CMT1.Slope (mOhm/Oe) - Transverse_Avg.")>0&:Name("CMT2.Slope (mOhm/Oe) - Transverse_Avg.")>0&:Name("CMT3.Slope (mOhm/Oe) - Transverse_Avg.")>0&:Name("CMT4.Slope (mOhm/Oe) - Transverse_Avg.")>0&:Name("CMT5.Slope (mOhm/Oe) - Transverse_Avg.")>0)|(:Name("Slope0")<0&:Name("CMT1.Slope (mOhm/Oe) - Transverse_Avg.")<0&:Name("CMT2.Slope (mOhm/Oe) - Transverse_Avg.")<0&:Name("CMT3.Slope (mOhm/Oe) - Transverse_Avg.")<0&:Name("CMT4.Slope (mOhm/Oe) - Transverse_Avg.")<0&:Name("CMT5.Slope (mOhm/Oe) - Transverse_Avg.")<0),0,1)));
+	dt_CMTsummary<<New Column("CMT_Fail_Total",Numeric, Continuous, Format("Best", 10), Formula(If(:CMT_Fail_dMRR|:CMT_Fail_dAmp|:CMT_Fail_Slope, 1, 0)),EvalFormula);,
+	//Else
+	dt_CMTsummary<<New Column("CMT_Fail_Total",Numeric, Continuous, Format("Best", 10), Formula(If(:CMT_Fail_dMRR|:CMT_Fail_dAmp, 1, 0)),EvalFormula);
+);
+
+dt_CMTsummary<<NewColumn("Test Name",Formula("CMT"),EvalFormula);
+col=dt_CMTsummary<<NewColumn("Spec_Revision",Formula(SpecRev),EvalFormula);
+col<<Delete Formula;
+dt_CMTsummary<<NewColumn("CMT_Field",Formula(normField),EvalFormula);
+dt_CMTsummary<<NewColumn("Test Condition",Character,Formula(Char(:CMT_Field)),EvalFormula);
+
+dt_CMTsummary<<Move Selected Columns({"NBO_Tag"},To First);
+dt_CMTsummary<<Move Selected Columns({"Setup File"},To First);
+dt_CMTsummary<<Move Selected Columns({"Date Key"},To First);
+dt_CMTsummary<<Move Selected Columns({"Test Condition"},To First);
+dt_CMTsummary<<Move Selected Columns({"CMT_Field"},To First);
+dt_CMTsummary<<Move Selected Columns({"SF_Lot_ID"},To First);
+dt_CMTsummary<<Move Selected Columns({"Lot ID"},To First);
+dt_CMTsummary<<Move Selected Columns({"Wafer"},To First);
+dt_CMTsummary<<Move Selected Columns({"Part ID"},To First);
+dt_CMTsummary<<Move Selected Columns({"Spec_Revision"},To First);
+dt_CMTsummary<<Move Selected Columns({"Test Name"},To First);
+dt_CMTsummary<<Move Selected Columns({"DOE"},To First);
+
+//filter with MRR0 and Amp0
+dt_CMTsummary<<Select Where(:Name("MRR(Ohm)")>uslMRR | :Name("MRR(Ohm)")<lslMRR | :Name("Ampl At Test(uV)")<lslAMP);
+dt_CMTsummary<<exclude;
+dt_CMTsummary<<hide;
+
+Show("Process CMT data done.");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Open BQST JMP file and mapped to CMR summary data.
+
+If(mapBQST==1,
+	dtBQST=Open(fileBQST); wait(1);
+	dtBQST<<Clear Select;
+	dtBQST<<Clear Column Selection;
+
+	dtMap=dtBQST<<Subset(Copy formula( 0 ), 
+		columns(
+			:DOE,
+			:Lot,
+			:SN,
+			:SH_MRR,
+			:SH_corr,
+			:Continuity,
+			:Raux,
+			:PinFail,
+			:MRR_BQST,
+			:ampl_BQST,
+			:asym_BQST,
+			),
+		Output Table Name("BQST_Mapped_Parameter"));
+	dtMap<<NewColumn("BQST",Formula(1),EvalFormula);
+	dt_CMTsummary=dt_CMTsummary<<Update(With(dtMap),Match Columns( :Part ID = :SN ),);
+
+	dt_CMTsummary<<Select Where( Is Missing( :BQST ) );
+	dt_CMTsummary<<Hide;
+	dt_CMTsummary<<Exclude;
+
+	Close(dtBQST, No Save);
+	Close(dtMap, No Save);
+
+	Show("Map BQST data done.");
+	);
+//_____________________________________________________________________________________________________________________________________________________________________
+//Summarize CMT FR
+If(prodtype==4,
+	dt_CMTFR=dt_CMTsummary<<Summary(
+		Group(:DOE, :Name("Test Name"), :Name("Spec_Revision"), :Wafer, :SF_Lot_ID, :CMT_Field, :Name("Test Condition"), :Name("Lot ID"), :NBO_Tag),
+		Mean(:Name("MRR(Ohm)")),
+		Mean(:Name("Ampl At Test(uV)")),
+		Mean(:Name("Asym At Test(%)")),
+		Std Dev(:Name("Asym At Test(%)")),
+		Mean( :Name( "Barkh Jump(%)") ),
+		Mean( :Name( "Hysteresis(%)") ),
+		Mean( :Name( "Slope(uV/Oe)") ),
+		
+		Mean( :Name( "MRR0") ),
+		Mean( :Name( "Amp0") ),
+		Mean( :Name( "Slope0") ),		
+
+		Sum( :Name("CMT_Fail_dMRR")),
+		Sum( :Name("CMT_Fail_dAmp")),
+		Sum( :Name("CMT_Fail_Slope")),
+		Sum( :Name("CMT_Fail_Total")),
+		Output Table Name("CMT_FRsummary")
+	);
+
+	current data table(dt_CMTFR);
+	//Column("N Rows")<<Set Name("CMT N Rows");
+	New Column("CMT_FR_dMRR", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_dMRR)")/:Name("N Rows")*100));
+	New Column("CMT_FR_dAmp", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_dAmp)")/:Name("N Rows")*100));
+	New Column("CMT_FR_Slope", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_Slope)")/:Name("N Rows")*100));
+	New Column("CMT_FR_Total", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_Total)")/:Name("N Rows")*100));,
+	//else
+	dt_CMTFR=dt_CMTsummary<<Summary(
+		Group(:DOE, :Name("Test Name"), :Name("Spec_Revision"), :Wafer, :SF_Lot_ID, :CMT_Field, :Name("Test Condition"), :Name("Lot ID"), :NBO_Tag),
+		Mean(:Name("MRR(Ohm)")),
+		Mean(:Name("Ampl At Test(uV)")),
+		Mean(:Name("Asym At Test(%)")),
+		Std Dev(:Name("Asym At Test(%)")),
+		Mean( :Name( "Barkh Jump(%)") ),
+		Mean( :Name( "Hysteresis(%)") ),
+		Mean( :Name( "Slope(uV/Oe)") ),
+		
+		Mean( :Name( "MRR0") ),
+		Mean( :Name( "Amp0") ),
+
+		Sum( :Name("CMT_Fail_dMRR")),
+		Sum( :Name("CMT_Fail_dAmp")),
+		Sum( :Name("CMT_Fail_Total")),
+		Output Table Name("CMT_FRsummary")
+	);
+
+	current data table(dt_CMTFR);
+	//Column("N Rows")<<Set Name("CMT N Rows");
+	New Column("CMT_FR_dMRR", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_dMRR)")/:Name("N Rows")*100));
+	New Column("CMT_FR_dAmp", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_dAmp)")/:Name("N Rows")*100));
+	New Column("CMT_FR_Total", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(CMT_Fail_Total)")/:Name("N Rows")*100));	
+);
+
+dt_CMTFR<<Run Formulas;
+Show("Process CMT summary done.");

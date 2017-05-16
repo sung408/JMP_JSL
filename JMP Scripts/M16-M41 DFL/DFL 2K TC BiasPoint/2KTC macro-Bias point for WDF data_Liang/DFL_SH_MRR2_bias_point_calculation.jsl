@@ -1,0 +1,38 @@
+﻿dt = Current Data Table();
+
+
+dt<<new column("Trans_MRRmin",Numeric,Continuous, Formula((:Name("1.Min (µV) - Transverse_Avg.") / (:Name("1.Bias Current (mA) - Transverse_Avg.") * -1)) * 0.001 + :Name("1.Resistance (Ohms) - Transverse_Avg."))); 
+
+dt<<new column("Trans_MRRmax",Numeric,Continuous, Formula((:Name( "1.Max (µV) - Transverse_Avg." ) / (:Name("1.Bias Current (mA) - Transverse_Avg.") * -1)) * 0.001 + :Name("1.Resistance (Ohms) - Transverse_Avg."))); 
+
+dt<<new column("Trans_MRR0",Numeric,Continuous, Formula(:Name( "1.Resistance (Ohms) - Transverse_Avg." ))); 
+
+dt<<new column("Long_MRRmin",Numeric,Continuous, Formula((:Name("Longitudinal.Min (µV) - Transverse_Avg.") / (:Name("Longitudinal.Bias Current (mA) - Transverse_Avg.") * -1)) * 0.001 + :Name("Longitudinal.Resistance (Ohms) - Transverse_Avg."))); 
+
+dt<<new column("Long_MRRmax",Numeric,Continuous, Formula((:Name("Longitudinal.Max (µV) - Transverse_Avg.") / (:Name("Longitudinal.Bias Current (mA) - Transverse_Avg.") * -1)) * 0.001 + :Name("Longitudinal.Resistance (Ohms) - Transverse_Avg."))); 
+
+dt<<new column ("WAFER_ID",Character,Nominal, Formula(Substr(:Part ID, 1, 4)));
+
+
+dt1 = Open( "C:\Users\TU_L\Desktop\TL@WD\Tools\2kTC\BiasPointCalculation\dRbyR_summary.jmp" );
+dt << Update( With( dt1 ), Match Columns( :WAFER_ID = :WAFER_ID ) );
+
+
+dt<<new column("Trans_MTJ_Rmin",Numeric,Continuous, Formula(1 / (1 / :Trans_MRRmin - 1 / :P2R))); 
+
+dt<<new column("Trans_MTJ_Rmax",Numeric,Continuous, Formula(1 / (1 / :Trans_MRRmax - 1 / :P2R))); 
+
+dt<<new column("Trans_MTJ_R0",Numeric,Continuous, Formula(1 / (1 / :Trans_MRR0 - 1 / :P2R))); 
+
+dt<<new column("Long_MTJ_Rmax",Numeric,Continuous, Formula(1 / (1 / :Long_MRRmax - 1 / :P2R))); 
+
+dt<<new column("Long_MTJ_Rmin",Numeric,Continuous, Formula(1 / (1 / :Long_MRRmin - 1 / :P2R)));
+
+dt<<new column("SH_MRR2",Numeric,Continuous, Formula((:Name( "A5-Ra" ) / (:Long_MTJ_Rmin * :FLTW)) * 10 ^ 6));
+
+// dt<<new column("Bias_Point_Con_by_wafer",Numeric,Continuous, Formula((((1 / :Long_MTJ_Rmin - 1 / :Trans_MTJ_R0) / (1 / :Long_MTJ_Rmin - 1 / (:Long_MTJ_Rmin * (1 + :Name("A1-dRbyR") / 100)))) * 100)));
+// dt<<new column("Bias_Point_Con_by_wafer",Numeric,Continuous, Formula(((( :Long_MTJ_Rmin -  :Trans_MTJ_R0) / ( :Long_MTJ_Rmin -  (:Long_MTJ_Rmin * (1 + :Name("A1-dRbyR") / 100)))) * 100)));
+dt<<new column("Bias_Point_Con_by_wafer",Numeric,Continuous, Formula(((( :Trans_MTJ_Rmin -  :Trans_MTJ_R0) / ( :Trans_MTJ_Rmin -  (:Trans_MTJ_Rmin * (1 + :Name("A1-dRbyR") / 100)))) * 100)));
+
+
+/*dt<<Move Selected Columns({“QST_Range”,"SMAN"}, After(“Lot”));*/

@@ -1,0 +1,32 @@
+// Open all files
+
+Folder = pick Directory("Select a Folder");
+Files = Files In Directory(Folder);
+show(Files);
+//Only keep production csv files
+for(j=1,j<=N Items(Files),j++, 
+	If (Substr(Files[j],Length(Files[j])-2,3)!= "csv", 
+		RemoveFrom(Files,j,1);
+		j=j-1;
+	);
+
+);
+
+Filelist = {}; /* creates a empty list for storing the names of each data table */
+
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(Files),j++, 
+	Prod = Open(Concat(Folder,Files[j]));
+	InsertInto(Filelist,Prod);
+);
+
+
+dt_temp=New Table();
+Data = dt_temp<<Concatenate(Filelist, Output Table name("Data"));
+
+Close(dt_temp, No Save);
+
+
+for(j=1, j<=N Items(Files),j++, 
+	Close(Filelist[j], No Save)
+);

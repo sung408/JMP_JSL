@@ -1,0 +1,151 @@
+//CMT data analysis version 1.1
+
+/* This is a Jmp macro to analyze 600 Oe CMT raw data file "*.Sweep Test.CMT Sweep_data.CSV" (version 1, where a sweep function is used)
+
+How to use:
+	1. copy all the CSV files need to be processed to one folder
+	2. Run the macro, select the folder in the pop up window
+	3. Manually save Jmp files (3 files, CMTraw, CMTsummary, and CMT_FRsummary)
+	
+The marco will modify the original file format in the "CMTraw" file, do calculation, then summarize the data by slider into the "CMTsummary" data table.
+This data is the result of each slider, and parts fail for MRR and Ampl will be excluded. Then it will summarize the data by wafer into the "CMT_FRsummary" data table.
+This data is the failure rate summarized by wafer.
+
+**** WARNING!!! If one wafer has several different designs (WIW designs, SH lots, etc), this macro will combine them together into one group (group by waferID).
+If there are several designs on the same wafer you need to put them in different folders and run then separately ******
+
+*/
+
+// Open all files
+
+Folder = pick Directory("Select a Folder");
+Files = Files In Directory(Folder);
+
+//Only keep production csv files
+for(j=1,j<=N Items(Files),j++, 
+	If (Substr(Files[j],Length(Files[j])-28,29)!= "Sweep Test.CMT Sweep_data.CSV", 
+		RemoveFrom(Files,j,1);
+		j=j-1;
+	);
+
+);
+
+Filelist = {}; /* creates a empty list for storing the names of each data table */
+
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(Files),j++, 
+
+	CSV = Open(Concat(Folder,Files[j]), End of Field(comma), Labels(0), Column Names Start(1), Data Starts(1), Lines To Read(All));
+
+	InsertInto(Filelist,CSV);
+);
+
+
+dt_temp=New Table();
+dt_CMT= dt_temp<<Concatenate(Filelist, Output Table name("CMTraw"));
+
+Close(dt_temp, No Save);
+
+for(j=1, j<=N Items(Files),j++, 
+	Close(Filelist[j], No Save)
+);
+
+//Change Format
+
+	Column(1)<<Set Name("MRR");
+	Column(2)<<Set Name("Amp");
+	Column(3)<<Set Name("Asym");
+	Column(4)<<Set Name("Barkh");
+	Column(5)<<Set Name("Hyst");
+	Column(6)<<Set Name("H_YPole");
+	dt_CMT<<Delete Columns(7);
+	dt_CMT<<add multiple columns("PartID",1,before first,character);
+
+	dt_CMT<<Select Where(:MRR =="Sweep Test.CMT Sweep.Resistance (Ohms).AVG");
+	dt_CMT<<delete rows;
+	For Each Row(:PartID=If(Contains(:MRR, "SR "), :Amp, Lag(:PartID, 1)));
+	dt_CMT<<Select Where(Contains(:MRR, "SR "));
+	dt_CMT<<delete rows;
+	
+	Column("MRR")<<data type("numeric");
+	Column("MRR")<<modeling type("continuous");
+	Column("Amp")<<data type("numeric");
+	Column("Amp")<<modeling type("continuous");
+	Column("Asym")<<data type("numeric");
+	Column("Asym")<<modeling type("continuous");
+	Column("Barkh")<<data type("numeric");
+	Column("Barkh")<<modeling type("continuous");
+	Column("Hyst")<<data type("numeric");
+	Column("Hyst")<<modeling type("continuous");
+	Column("H_YPole")<<data type("numeric");
+	Column("H_YPole")<<modeling type("continuous");
+
+//Add new columns and calculations	
+	New Column("CMT field", Numeric, Continuous, Format("Best", 10), Formula(-1 * :Name("H_YPole")));
+	New Column("MRR0", Numeric, Continuous, Format("Best", 10), Formula(If(Row() == 1, :MRR, If(:PartID != Lag(:PartID, 1), :MRR, Lag(:MRR0, 1))))); 
+	New Column("Bark0", Numeric, Continuous, Format("Best", 10), Formula(If(Row() == 1, :Barkh, If(:PartID != Lag(:PartID, 1), :Barkh, Lag(:Bark0, 1))))) ;
+	New Column("Hyst0", Numeric, Continuous, Format("Best", 10), Formula(If(Row() == 1, :Hyst, If(:PartID != Lag(:PartID, 1), :Hyst, Lag(:Hyst0, 1))))); 
+	New Column("Amp0", Numeric, Continuous, Format("Best", 10), Formula(If(Row() == 1, :Amp, If(:PartID != Lag(:PartID, 1), :Amp, Lag(:Amp0, 1))))); 
+	New Column("dMRR%", Numeric, Continuous, Format("Best", 10), Formula(((:MRR - :MRR0) / :MRR0) * 100)); 
+	New Column("dAmp%", Numeric, Continuous, Format("Best", 10), Formula(((:Amp - :Amp0) / :Amp0) * 100)); 
+	New Column("dBark", Numeric, Continuous, Format("Best", 10), Formula(:Barkh - :Bark0));
+	New Column("dHyst", Numeric, Continuous, Format("Best", 10), Formula(:Hyst - :Hyst0));
+	New Column("Amp_uV", Numeric, Continuous, Format("Best", 10), Formula((140 / :MRR0) * 1000 * :Amp));
+	New Column("Amp0_uV", Numeric, Continuous, Format("Best", 10), Formula((140 / :MRR0) * 1000 * :Amp0));
+	New Column("WaferID", Character, Norminal, Formula(Substr(:PartID, 1, 4)));
+
+dt_CMT<<Run Formulas;
+dt_CMT<<Move Selected Columns({"WaferID"},To First);
+
+//Summarize CMT raw data
+dt_CMTsummary = dt_CMT << Summary(
+	Group( :WaferID, :PartID ),
+	Mean( :MRR0 ),
+	Mean( :Amp0 ),
+	Mean( :Amp0_uV ),
+	Min( :dMRR% ),
+	Min( :dAmp% ),
+	Max( :dMRR% ),
+	Max( :dAmp% ),
+	Output Table Name("CMTsummary")
+);
+
+current data table(dt_CMTsummary);
+
+//change column names
+Column("Mean(Amp0)")<<Set Name("Amp0");
+Column("Mean(MRR0)")<<Set Name("MRR0");
+Column("Mean(Amp0_uV)")<<Set Name("Amp0_uV");
+
+//add calculation
+New Column("dMRR%_Max", Numeric, Continuous, Format("Best", 10), Formula(If(Abs(:Name("Max(dMRR%)")) > Abs(:Name("Min(dMRR%)")), :Name("Max(dMRR%)"), :Name("Min(dMRR%)"))));
+New Column("dAmp%_Max", Numeric, Continuous, Format("Best", 10), Formula(If(Abs(:Name("Max(dAmp%)")) > Abs(:Name("Min(dAmp%)")), :Name("Max(dAmp%)"), :Name("Min(dAmp%)"))));
+New Column("abs(dMRR%_Max)", Numeric, Continuous, Format("Best", 10), Formula(abs(:dMRR%_Max)));
+New Column("abs(dAmp%_Max)", Numeric, Continuous, Format("Best", 10), Formula(abs(:dAmp%_Max)));
+New Column("Fail_dMRR",Numeric, Continuous, Format("Best", 10), Formula(If(:abs(dMRR%_Max) > 5, 1, 0)));
+New Column("Fail_dAmp",Numeric, Continuous, Format("Best", 10), Formula(If(:abs(dAmp%_Max) > 20, 1, 0)));
+New Column("Fail_CMT",Numeric, Continuous, Format("Best", 10), Formula(If(:Fail_dMRR|:Fail_dAmp, 1, 0)));
+
+//filter with MRR0 and Amp0
+dt_CMTsummary<<Select Where(:MRR0>950 | :MRR0<250 | :Amp0_uV<1500);
+dt_CMTsummary<<exclude;
+dt_CMTsummary<<hide;
+
+//Summarize CMT FR
+dt_CMTFR=dt_CMTsummary<<Summary(
+	Group(:WaferID),
+	Mean( :Name( "MRR0") ),
+	Mean( :Name( "Amp0") ),
+	Mean( :Name( "Amp0_uV" ) ),
+	Sum( :Name("Fail_dMRR")),
+	Sum( :Name("Fail_dAmp")),
+	Sum( :Name("Fail_CMT")),
+	Output Table Name("CMT_FRsummary")
+);
+
+current data table(dt_CMTFR);
+Column("N Rows")<<Set Name("CMT N Rows");
+New Column("FR_dMRR", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_dMRR)")/:Name("CMT N Rows")*100));
+New Column("FR_dAmp", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_dAmp)")/:Name("CMT N Rows")*100));
+New Column("FR_CMT", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_CMT)")/:Name("CMT N Rows")*100));
+

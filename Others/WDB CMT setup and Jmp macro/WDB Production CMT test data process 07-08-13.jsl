@@ -1,0 +1,108 @@
+// To process WDB Production Tester CMT data
+// MDS file Version: 	CMT.A.CMT-M11.21_06_2013_Soft Bias CMT_Ver2.3 [184AF542].mds
+//						CMT.A.CMT-M16.21_06_2013_Soft Bias CMT_Ver2.3 [ADB6E1C1].mds
+//						CMT.A.CMT-M34.21_06_2013_Soft Bias CMT_Ver2.3 [6D11178D].mds
+
+//07-08-13, Yunfei D.
+
+Folder = pick Directory("Select a Folder");
+Files = Files In Directory(Folder);
+
+//Only keep production csv files
+for(j=1,j<=N Items(Files),j++, 
+	If (Substr(Files[j],Length(Files[j])-15,16)!= "Production.1.CSV", 
+		RemoveFrom(Files,j,1);
+		j=j-1;
+	);
+
+);
+
+Filelist = {}; /* creates a empty list for storing the names of each data table */
+
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(Files),j++, 
+
+	CSV = Open(Concat(Folder,Files[j]), End of Field(comma), Labels(1), Column Names Start(3), Data Starts(4), Lines To Read(All));
+	InsertInto(Filelist,CSV);
+	
+//Add lot # to the data table	
+	LotNumber = 	If(Contains(Files[j], "$C"), 
+				Substr(Files[j], Contains(Files[j], "$C"), 4), 
+				If(Contains(Files[j], "&C"), 
+					Substr(Files[j], Contains(Files[j], "&C"), 4)
+				)
+			);
+	New Column("Lot", Character, Norminal);
+	For Each Row(:Lot=LotNumber);
+);
+
+
+dt_temp=New Table();
+dt_all= dt_temp<<Concatenate(Filelist, Output Table name("AllData"));
+
+Close(dt_temp, No Save);
+
+for(j=1, j<=N Items(Files),j++, 
+	Close(Filelist[j], No Save)
+);
+
+dt_all<<Select Where(:Part ID =="Part ID");
+dt_all<<delete rows;
+dt_all<<Select Where(:Hd =="System");
+dt_all<<delete rows;
+dt_all<<Select Where(:Grade =="Failed");
+dt_all<<delete rows;
+
+
+Column(8)<<data type(Numeric)<<Set Modeling Type("Continuous");
+for(i=17,i<=95,i++,
+	Column(i)<<data type(Numeric)<<Set Modeling Type("Continuous")
+);
+
+New Column("WaferID", Character, Norminal, Formula(Substr(:PartID, 1, 4)));
+dt_all<<Move Selected Columns({"Lot"},To First);
+dt_all<<Move Selected Columns({"WaferID"},To First);
+
+Column("MRR - Production_Avg.")<<Set Name("MRR(Ohm)");
+Column("Ampl At Test(uV) - Production_Avg.")<<Set Name("Ampl At Test(uV)");
+Column("Asym At Test(%) - Production_Avg.")<<Set Name("Asym At Test(%)");
+Column("Barkh Jump(%) - Production_Avg.")<<Set Name("Barkh Jump(%)");
+Column("Hysteresis(%) - Production_Avg.")<<Set Name("Hysteresis(%)");
+Column("Slope(uV/Oe) - Production_Avg.")<<Set Name("Slope(uV/Oe)");
+
+Column("MRR0 - Production_Avg.")<<Set Name("MRR0");
+Column("Ampl0 - Production_Avg.")<<Set Name("Amp0");
+Column("FR_dMRR - Production_Avg.")<<Set Name("Fail_dMRR");
+Column("FR_dAmp - Production_Avg.")<<Set Name("Fail_dAmp");
+Column("FR_CMT - Production_Avg.")<<Set Name("Fail_CMT");
+
+New Column("Amp0_uV", Numeric, Continuous, Format("Best", 10), Formula(140/:MRR0*:Amp0*1000));
+
+dt_CMTFR=dt_all<<Summary(
+	Group(:WaferID,:Lot),
+	Mean(:Name("MRR(Ohm)")),
+	Mean(:Name("Ampl At Test(uV)")),
+	Mean(:Name("Asym At Test(%)")),
+	Std Dev(:Name("Asym At Test(%)")),
+	Mean( :Name( "Barkh Jump(%)") ),
+	Mean( :Name( "Hysteresis(%)") ),
+	Mean( :Name( "Slope(uV/Oe)") ),
+		
+	Mean( :Name( "MRR0") ),
+	Mean( :Name( "Amp0") ),
+	Mean( :Name("Amp0_uV")),
+
+	Sum( :Name("Fail_dMRR")),
+	Sum( :Name("Fail_dAmp")),
+	Sum( :Name("Fail_CMT")),
+	Output Table Name("CMT_FRsummary")
+);
+
+
+current data table(dt_CMTFR);
+Column("N Rows")<<Set Name("CMT N Rows");
+New Column("FR_dMRR", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_dMRR)")/:Name("CMT N Rows")*-100));
+New Column("FR_dAmp", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_dAmp)")/:Name("CMT N Rows")*-100));
+New Column("FR_CMT", Numeric, Continuous, Format("Best", 10), Formula(:Name("Sum(Fail_CMT)")/:Name("CMT N Rows")*-100));
+
+dt_CMTFR<<Run Formulas;

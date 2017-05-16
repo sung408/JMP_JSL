@@ -1,0 +1,20 @@
+
+
+//Fit all slopes
+
+biv =Bivariate( Y( :Name("1.Test 2 Resistance 0 0.25 - Quasi-Static Tests_Avg.") ), X( :temp ), Group by( :WF_ROW_HD ), Fit line( 1 ) );
+
+//Make into data table
+slopetable = Report( biv )[Outline Box( "Parameter Estimates" )][1] << make combined data table;
+
+slopetable << Split(
+
+  Split By( :Term ),
+
+  Split( :Estimate ),
+
+  Group( :X, :Y, :WF_ROW_HD ),
+
+  Remaining Columns( Drop All )
+
+);

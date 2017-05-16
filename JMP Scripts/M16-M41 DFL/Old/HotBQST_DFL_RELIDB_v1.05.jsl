@@ -1,0 +1,723 @@
+﻿//This process HotBQST raw CSV files. Only one NBO must be included and filtered all duplicates.
+//v1.02		Add normalized SMAN and combo spec parameters. Followed BQST spec for Bin1.
+//v1.03		Add Filter Pass to screen tester related failures in all steps.
+//			Add parametric delta change for all BQST yield parameters.
+//v1.04		Exclude Date header in summary file. Change QSNR.DFH header to numeric.
+//v1.05		Modify BQST Yield Spec for MRR 950 to 1100. Add JMP script information and spec.
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Function: Load CSV file to JMP.
+Clear Globals ();
+Clear Log();
+
+p = pick Directory("Select a Folder");
+f = Files In Directory(p);
+
+//dirD = "C:\Users\mark_a\Desktop\JSL\Ravi Reli\SpotfireScripts\Output\";
+
+////////////////////////////////// Concentrate FCA ////////////////////////////////////////
+
+for(j=1,j<=N Items(f),j++, 
+	If (Substr(f[j],Length(f[j])-2,3)!= "CSV", 
+		RemoveFrom(f,j,1);
+		j=j-1;
+	);
+);
+
+A = {}; /* creates a empty list for storing the names of each data table */
+B = {};
+C = {};
+D = {};
+k = {};
+m = {};
+  
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(f),j++, 
+	CSV = Open(Concat(p,f[j]), End of Field(comma), Strip Quotes(1), Labels(1), 
+								Column Names Start(3), Data Starts(4), 	Columns(:MRR=Numeric));
+	colname = {};
+	colname = CSV<<get Column Names(String);
+	if(Contains(colname,"Hd")>0 & Contains(colname,"Part ID")>0, 
+		InsertInto(A,CSV);
+		CSV<<NewColumn("DOE",Character,Formula(Substr(f[j],Length(f[j])-20,4)),EvalFormula);
+		CSV<<NewColumn("NBO_Tag",Character,Formula(Substr(f[j],Length(f[j])-29,8)),EvalFormula);
+		CSV<<Select Where(:Hd =="System");
+		CSV<<delete rows;
+		CSV<<Select Where(:Part ID =="Part ID");
+		CSV<<delete rows;,
+	//Else
+		InsertInto(B,CSV);
+		InsertInto(k,f[j]);
+	);
+);
+
+//Concatenating the Group A files
+dt1=New Table();
+If(N Items(A)>1, 
+	::dtfca = dt1<<Concatenate(A, Output Table name("HotBQST_Raw_Data"));
+	dtfca<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+//Get column header from the final table
+colheader = {};
+colheader = dtfca<<get Column Names(string);
+
+//Setting the correct column names for the errored files
+For(j=1,j<=N Items(B), j++,
+	If(Ncol(B[j])< N Items(colheader), temp =Ncol(B(j)), temp =N Items(colheader) );
+	For (i=1,i<=temp,i++,
+	Column(B[j],i)<<Set name(colheader[i]);
+	 );
+);
+
+//Concatenating the Group B files
+dt1=New Table();
+If(N Items(B)>1, 
+	dt3 = dt1<<Concatenate(B, Output Table name("Remaining Data"));
+	dt3<<Delete Columns("Column 1");
+);
+Close(dt1, No Save);
+
+//checking if the column numbers are the same among all the files Group A
+flga = 0;
+for(j=1, j<=N Items(A),j++, 
+	If ((NCol(A[1]) != NCol(A[j])) & flga == 0,
+	flga = 1;
+	);
+);
+
+//Closing all the open files
+for(j=1, j<=N Items(A),j++, 
+Close(A[j], No Save);
+);
+for(j=1, j<=N Items(B),j++, 
+Close(B[j], No Save);
+);
+
+dtfca << Select Where(Is Missing(:Name("Part ID")));
+dtfca << delete rows();
+
+wait(1);
+//dtfca<<save(dirD||"FCA_raw.jmp");
+dtfca<<save("HotBQST_Raw_Data.jmp");
+Show("Load CSV file done!");
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Delete sliders #1,2,53,54 for each bar
+dtfca<<Select Where(:Name("Hd") == ("SR 1"));
+dtfca<<Delete Rows();
+dtfca<<Select Where(:Name("Hd") == ("SR 2"));
+dtfca<<Delete Rows();
+dtfca<<Select Where(:Name("Hd") == ("SR 53"));
+dtfca<<Delete Rows();
+dtfca<<Select Where(:Name("Hd") == ("SR 54"));
+dtfca<<Delete Rows();
+
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Add test information
+//colLot=Column(dtfca, "Lot"); colLot<<Set Name("Lot ID"); 
+dtfca<<NewColumn("Test Name",Formula("HotBQST"),EvalFormula);
+dtfca<<NewColumn("Wafer",Formula(Substr(:Part ID, 1, 4)),EvalFormula);
+dtfca<<NewColumn("SF_Lot_ID",Formula(Substr(:Lot ID, 5,4)),EvalFormula);
+dtfca<<NewColumn("ScriptVer",Formula("HotBQST_DFL_RELIDB_v1.05.jsl"),EvalFormula);
+
+dtfca<<NewColumn("Temperature",Formula(
+	If(
+		Contains(:Lot ID, "HM1"), 25, 
+		Contains(:Lot ID, "H40"), 40, 
+		Contains(:Lot ID, "H60"), 60, 
+		Contains(:Lot ID, "H80"), 80, 
+		Contains(:Lot ID, "HM2"), 26
+		)	
+	),EvalFormula);
+
+dtfca<<NewColumn("Test Condition",Character,Formula(Char(:Temperature)),EvalFormula);
+dtfca<<NewColumn("Spec_Revision",Character,Formula("M41CF003DFL(widerAsym+highMRR"),EvalFormula);
+
+dtfca<<NewColumn("PinFail",Formula(Match(:Name("1.Pin Failure - Static Tests_Avg."),"NONE", 0, 1)),EvalFormula);
+dtfca<<NewColumn("MNM/Amp",Formula((:Name("1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max.") / :Name("6.DFH.Amp At Test (µV) - Transverse_Avg.")) * 100),EvalFormula);
+dtfca<<NewColumn("NM/Amp",Formula((:Name("1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max.") / :Name("6.DFH.Amp At Test (µV) - Transverse_Avg.")) * 100),EvalFormula);
+dtfca<<NewColumn("Combo_MRR_Ampl",Formula(If(:MRR < 500 & :Name("6.DFH.Amp At Test (µV) - Transverse_Avg.") < 10000, 0, 1)),EvalFormula);
+dtfca<<NewColumn("Combo SMAN_QSNR",Formula(If(:Name("MNM/Amp") > 16 & :Name("NM/Amp") > 11 & :Name("QSNR.DFH - Production_Avg.") < 23, 0, 1)),EvalFormula);
+dtfca<<NewColumn("PLR",Formula(If(:Name("6.DFH.Amp At Test (µV) - Transverse_Avg.") > 2000 & :Name("6.DFH.Slope (µV/Oe) - Transverse_Avg.") < 0, 0, 1)),EvalFormula);
+
+col=Column(dtfca,"1.WR Resistance (Ohm) - Static Tests_Avg."); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+col=Column(dtfca,"1.Write Fault Reg - Static Tests_Avg."); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+col=Column(dtfca,"1.Read Fault Reg - Static Tests_Avg."); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+col=Column(dtfca,"TDS Resistance (Ohm)"); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+col=Column(dtfca,"TDS Contact (Ohm)"); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+col=Column(dtfca,"Reader ELG"); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+col=Column(dtfca,"QSNR.DFH - Production_Avg."); col<<Data Type( "Numeric" ) << Modeling Type( "Continuous" );
+Show("Add test information done!");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Add column "Filter" to screen test related issues. Pass=1, Fail=0.
+//Filter Pass specs agreed on 05-May-2015 with Ravi is applied to all steps. Common to all products.
+dtfca<<NewColumn("Filter",Formula(
+	If(
+		:Name("1.Contact Resistance (Ohm) - Static Tests_Avg.") < -15 | :Name("1.Contact Resistance (Ohm) - Static Tests_Avg.") > 15 |
+		:Name("PinFail") < 0 | :Name("PinFail") > 0 |
+		:Name("1.Aux Resistance (Ohm) - Static Tests_Avg.") < 60 | :Name("1.Aux Resistance (Ohm) - Static Tests_Avg.") > 160 |
+		:MRR < 10 | :MRR > 1500 , 0, 1)
+	),EvalFormula);
+Show("Add Filter pass done!"); 
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Add column "Pass". Pass=1, Fail=0.
+dtfca<<NewColumn("Pass",Formula(
+	If(
+		:MRR < 250 | :MRR > 1100 | 
+		:Name("6.DFH.Amp At Test (µV) - Transverse_Avg.") < 5000 | :Name("6.DFH.Amp At Test (µV) - Transverse_Avg.") > 40000 | 
+		:Name("6.DFH.Asym At Test (%) - Transverse_Avg.") < -35 | :Name("6.DFH.Asym At Test (%) - Transverse_Avg.") > 35 | 
+		:Name("6.DFH.Barkh. Jump (%) - Transverse_Avg.") > 9 |
+		:Name("6.DFH.Hysteresis (%) - Transverse_Avg.") > 10 | 
+		:Name("6.DFH.Slope (µV/Oe) - Transverse_Avg.") <= 0.5 | 
+		:Name("6.DFH.Slope (µV/Oe) - Transverse_Avg.") >= 50 |
+		:Name("MSAS.DFH - Production_Avg.") > 6.5 | 
+		:Name("MaxNoisePower.DFH - Production_Avg.") > 14 | 
+		:Name("NoisePower.DFH - Production_Avg.") > 8 | 
+		:Name("MNM/Amp") > 20 | 
+		:Name("NM/Amp") > 13 | 
+		:Name("QSNR.DFH - Production_Avg.") < 21 | 
+		:Name("N-DC Noise Rng.DFH - Production_Avg.") > 25 | 
+		:Name("Amp Rng.DFH - Production_Avg.") > 14 | 
+		:Name("Asym Rng.DFH - Production_Avg.") > 13 | 
+		:Name("Combo_MRR_Ampl") < 0.9 | :Name("Combo_MRR_Ampl") > 1.1 |
+		:Name("Combo SMAN_QSNR") < 0.9 | :Name("Combo SMAN_QSNR") > 1.1 |
+		:Name("1.Aux Resistance (Ohm) - Static Tests_Avg.") < 103 | :Name("1.Aux Resistance (Ohm) - Static Tests_Avg.") > 115 |
+//		:Name("1.Contact Resistance (Ohm) - Static Tests_Avg.") < -15 | :Name("1.Contact Resistance (Ohm) - Static Tests_Avg.") > 15 |
+//		:Name("PLR") < 0.9 | :Name("PLR") > 1.1 |
+		:Name("PinFail") < 0 | :Name("PinFail") > 0, 0, 1)
+	),EvalFormula);
+Show("Add Bin1 spec done!"); 
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Re-order columns
+dtfca<<Move Selected Columns({"DOE"},To First);
+dtfca<<Move Selected Columns({"Test Name"}, After("DOE"));
+dtfca<<Move Selected Columns({"Spec_Revision"}, After("Test Name"));
+dtfca<<Move Selected Columns({"Part ID"}, After("Spec_Revision"));
+dtfca<<Move Selected Columns({"Wafer"}, After("Part ID"));
+dtfca<<Move Selected Columns({"Date"}, After("Wafer"));
+dtfca<<Move Selected Columns({"Filter"}, After("Date"));
+dtfca<<Move Selected Columns({"Pass"}, After("Filter"));
+dtfca<<Move Selected Columns({"Lot ID"}, After("Pass"));
+dtfca<<Move Selected Columns({"SF_Lot_ID"}, After("Lot ID"));
+dtfca<<Move Selected Columns({"Temperature"}, After("SF_Lot_ID"));
+dtfca<<Move Selected Columns({"Test Condition"}, After("Temperature"));
+dtfca<<Move Selected Columns({"Tester SN"}, After("Test Condition"));
+dtfca<<Move Selected Columns({"Date Key"}, After("Tester SN"));
+dtfca<<Move Selected Columns({"Setup File"}, After("Date Key"));
+dtfca<<Move Selected Columns({"NBO_Tag"}, After("Setup File"));
+dtfca<<Move Selected Columns({"1.Contact Resistance (Ohm) - Static Tests_Avg."}, After("NBO_Tag"));
+dtfca<<Move Selected Columns({"1.Aux Resistance (Ohm) - Static Tests_Avg."}, After("1.Contact Resistance (Ohm) - Static Tests_Avg."));
+dtfca<<Move Selected Columns({"PinFail"}, After("1.Aux Resistance (Ohm) - Static Tests_Avg."));
+dtfca<<Move Selected Columns({"MRR"}, After("PinFail"));
+dtfca<<Move Selected Columns({"6.DFH.Amp At Test (µV) - Transverse_Avg."}, After("MRR"));
+dtfca<<Move Selected Columns({"6.DFH.Asym At Test (%) - Transverse_Avg."}, After("6.DFH.Amp At Test (µV) - Transverse_Avg."));
+dtfca<<Move Selected Columns({"6.DFH.Barkh. Jump (%) - Transverse_Avg."}, After("6.DFH.Asym At Test (%) - Transverse_Avg."));
+dtfca<<Move Selected Columns({"6.DFH.Hysteresis (%) - Transverse_Avg."}, After("6.DFH.Barkh. Jump (%) - Transverse_Avg."));
+dtfca<<Move Selected Columns({"6.DFH.Slope (µV/Oe) - Transverse_Avg."}, After("6.DFH.Hysteresis (%) - Transverse_Avg."));
+dtfca<<Move Selected Columns({"6.DFH.Max Slope (µV/Oe) - Transverse_Avg."}, After("6.DFH.Slope (µV/Oe) - Transverse_Avg."));
+dtfca<<Move Selected Columns({"MSAS.DFH - Production_Avg."}, After("6.DFH.Max Slope (µV/Oe) - Transverse_Avg."));
+dtfca<<Move Selected Columns({"MaxNoisePower.DFH - Production_Avg."}, After("MSAS.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"NoisePower.DFH - Production_Avg."}, After("MaxNoisePower.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Avg."}, After("NoisePower.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max."}, After("1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Avg."));
+dtfca<<Move Selected Columns({"1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max."}, After("1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max."));
+dtfca<<Move Selected Columns({"MNM/Amp"}, After("1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max."));
+dtfca<<Move Selected Columns({"NM/Amp"}, After("MNM/Amp"));
+dtfca<<Move Selected Columns({"QSNR.DFH - Production_Avg."}, After("NM/Amp"));
+dtfca<<Move Selected Columns({"N-DC Noise Rng.DFH - Production_Avg."}, After("QSNR.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"Amp Rng.DFH - Production_Avg."}, After("N-DC Noise Rng.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"Asym Rng.DFH - Production_Avg."}, After("Amp Rng.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"Combo_MRR_Ampl"}, After("Asym Rng.DFH - Production_Avg."));
+dtfca<<Move Selected Columns({"Combo SMAN_QSNR"}, After("Combo_MRR_Ampl"));
+Show("Sort columns done!"); 
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Remove tester related failures (Filter=0) in all steps.
+//Join "HotBQST_Filter_Fails" to "HotBQST_Raw_Data".
+//Add column "delete". Fail=1 (delete row), Pass=0. 
+dtfca<<Select Where(:Filter == 0 );
+dtFilFail=dtfca<<Subset(Copy formula( 0 ), columns( :DOE, :NBO_Tag, :Part ID ), Output Table Name("HotBQST_Filter_Fails"));
+dtFilFail<<NewColumn("delete",Formula(1),EvalFormula);
+
+dtPrescreen=dtfca << Join(
+	With( dtFilFail ),
+	Output Table Name("HotBQST_Prescreen"),
+	Suppress formula evaluation( 1 ),
+	By Matching Columns( :DOE = :DOE, :NBO_Tag = :NBO_Tag, :Part ID = :Part ID ),
+	Drop multiples( 0, 0 ),
+	Name( "Include non-matches" )(1, 0),
+	Preserve main table order( 0 )
+	);
+
+Close(dtFilFail, No Save);
+
+dtPrescreen<<Select Where(:Name("delete") == 1);
+dtPrescreen<<delete rows();
+
+col=Column(dtPrescreen,"Part ID of HotBQST_Raw_Data"); col<<Set Name("Part ID");
+col=Column(dtPrescreen,"DOE of HotBQST_Raw_Data"); col<<Set Name("DOE");
+col=Column(dtPrescreen,"NBO_Tag of HotBQST_Raw_Data"); col<<Set Name("NBO_Tag");
+
+dtPrescreen<<Delete Columns("DOE of HotBQST_Filter_Fails");
+dtPrescreen<<Delete Columns("NBO_Tag of HotBQST_Filter_Fails");
+dtPrescreen<<Delete Columns("Part ID of HotBQST_Filter_Fails");
+dtPrescreen<<Delete Columns("delete");
+Show("Pre-screen for all steps done!"); 
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Select initial failing heads at Temperature = 25 and create a subset table.
+//Join "HotBQST_Initial_Fails" to "HotBQST_Prescreen".
+//Add column "delete". Fail=1 (delete row), Pass=0. 
+dtPrescreen<<Select Where(:Name("Pass") == 0 & (:Name("Temperature") == 25 ));
+dtInitFail=dtPrescreen<<Subset(Copy formula( 0 ), columns( :DOE, :NBO_Tag, :Part ID ), Output Table Name("HotBQST_Initial_Fails"));
+dtInitFail<<NewColumn("delete",Formula(1),EvalFormula);
+
+dtFiltered=dtPrescreen << Join(
+//	With( Data Table( "HotBQST_Initial_Fails" ) ),
+	With( dtInitFail ),
+	Output Table Name("HotBQST_Filtered"),
+	Suppress formula evaluation( 1 ),
+	By Matching Columns( :DOE = :DOE, :NBO_Tag = :NBO_Tag, :Part ID = :Part ID ),
+	Drop multiples( 0, 0 ),
+	Name( "Include non-matches" )(1, 0),
+	Preserve main table order( 0 )
+	);
+	
+Close(dtInitFail, No Save);
+Close(dtPrescreen, No Save);
+
+dtFiltered<<Select Where(:Name("delete") == 1);
+dtFiltered<<delete rows();
+
+col=Column(dtFiltered,"Part ID of HotBQST_Prescreen"); col<<Set Name("Part ID");
+col=Column(dtFiltered,"DOE of HotBQST_Prescreen"); col<<Set Name("DOE");
+col=Column(dtFiltered,"NBO_Tag of HotBQST_Prescreen"); col<<Set Name("NBO_Tag");
+
+dtFiltered<<Delete Columns("DOE of HotBQST_Initial_Fails");
+dtFiltered<<Delete Columns("NBO_Tag of HotBQST_Initial_Fails");
+dtFiltered<<Delete Columns("Part ID of HotBQST_Initial_Fails");
+dtFiltered<<Delete Columns("delete");
+Show("Filtered data done!"); 
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Summary by user requirement and calculate delta Yield.
+//Plot delta Yield by user requirement.
+dtFilSummary=dtFiltered<< Summary( Group( :DOE, :Test Name, :Spec_Revision, :ScriptVer, :Wafer, :SF_Lot_ID, :Temperature, :Test Condition, :Name("Lot ID"), :NBO_Tag ), Sum( :Pass ) );
+
+dtFilSummary<<NewColumn("Yield",Formula(:Name("Sum(Pass)") * (100 / :N Rows)),EvalFormula);
+dtFilSummary<<NewColumn("dYield",Formula(:Name("Yield") - 100),EvalFormula);
+
+col=Column(dtFilSummary, "Temperature")<<set lock(0);
+colStepOrder=Column(dtFilSummary,"Temperature")<<set property(value ordering,{25, 40, 60, 80, 26});
+
+//NewName = (Left (f[1], Length(f[1])-37)||(Substr(f[1],Length(f[1])-20,4)));
+//dtFilSummary<<Save("\\wdtbsan02\doe\DataFiles\Reader\"|| DOE ||"_HotBQST_Summary"||".CSV");
+dtFilSummary<<save("HotBQST_Summary.jmp");
+Show("Yield and delta Yield done!"); 
+
+chartDeltaYield=dtFilSummary<<Variability Chart(
+	Y( :dYield ),
+	X( :DOE, :Wafer, :NBO_Tag, :SF_Lot_ID, :Temperature ),
+	Connect Cell Means( 1 ),
+	Std Dev Chart( 0 ),
+	SendToReport(
+		Dispatch(
+			{"Variability Chart for dYield"},
+			"2",
+			ScaleBox,
+			{Scale( Linear ), Format( "Fixed Dec", 0 ), Min( -40 ),
+			Max( 5 ), Inc( 5 ),
+			Add Ref Line( 0, Dotted, Medium Light Gray ),
+			Add Ref Line( -5, Solid, Red ), Show Major Grid( 1 )}
+		),
+		Dispatch(
+			{"Variability Chart for dYield"},
+			"Variability Chart",
+			FrameBox,
+			Marker Size( 5 )
+		)
+	)
+);
+Show("Summary delta Yield done!"); 
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Create transposed data from "HotBQST_Filtered".
+dtFilTransposed = dtFiltered <<
+Transpose(
+	columns(
+		:MRR,
+		:Name( "6.DFH.Amp At Test (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Asym At Test (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Hysteresis (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "MSAS.DFH - Production_Avg." ),
+		:Name( "MaxNoisePower.DFH - Production_Avg." ),
+		:Name( "NoisePower.DFH - Production_Avg." ),
+		:Name( "QSNR.DFH - Production_Avg." ),
+		:Name( "N-DC Noise Rng.DFH - Production_Avg." ),
+		:Name( "Amp Rng.DFH - Production_Avg." ),
+		:Name( "Asym Rng.DFH - Production_Avg." ),
+		:Name( "1.Aux Resistance (Ohm) - Static Tests_Avg." ),
+		:Name( "1.Contact Resistance (Ohm) - Static Tests_Avg." ),
+//		:Name( "1.Pin Failure - Static Tests_Avg." ),
+		:PinFail,
+		:Name( "MNM/Amp" ),
+		:Name( "NM/Amp" ),
+		:Combo_MRR_Ampl,
+		:Combo SMAN_QSNR,
+		:Name( "1.Aux Voltage (mV) - Static Tests_Avg." ),
+		:Name( "1.WR Resistance (Ohm) - Static Tests_Avg." ),
+		:Name( "1.Write Fault Reg - Static Tests_Avg." ),
+		:Name( "1.Read Fault Reg - Static Tests_Avg." ),
+		:Name( "1.DFH.Amp At Test (µV) - Transverse_Avg." ),
+		:Name( "2.DFH.Amp At Test (µV) - Transverse_Avg." ),
+		:Name( "1.DFH.Asym At Test (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Asym At Test (%) - Transverse_Avg." ),
+		:Name( "1.DFH.Barkh. Jump (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Barkh. Jump (%) - Transverse_Avg." ),
+		:Name( "1.DFH.Hysteresis (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Hysteresis (%) - Transverse_Avg." ),
+		:Name( "1.DFH.Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "2.DFH.Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump (%) - Transverse_Max." ),
+		:Name( "6.DFH.Barkh Jump (Signed) (uV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. At Test/Amp At Test (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump At Test (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Fwd (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Fwd At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Rev (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Rev At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Measure At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Pk-Pk Amp (uV) - Transverse_Avg." ),
+		:Name( "6.DFH.Pk-Pk Asym (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Resistance (Ohms) - Transverse_Avg." ),
+		:Name( "6.DFH.Bias Current (mA) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Hyst (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Slope Amp (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Slope (Signed) (µV/Oe) - Transverse_Avg." ),
+		:Name( "1.DFH.Max Slope (Signed) (µV/Oe) - Transverse_Avg." ),
+		:Name( "2.DFH.Max Slope (Signed) (µV/Oe) - Transverse_Avg." ),
+		:Name( "0 bias.Max Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "0 bias.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "0 bias.Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "0 bias.Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "0 bias.Noise RMS (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "0 bias.Noise RMS (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Avg." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Min." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Max." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Range" ),
+		:Name( "1.DFH.Amp RMS (µV) - DC Noise_Avg." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Std." ),
+		:Name( "1.DFH.Kurtosis - DC Noise_Avg." ),
+		:Name( "1.DFH.KSL - DC Noise_Avg." ),
+		:Name( "MRR@end" ),
+		:Name( "6.DFH.Delta R/R (%) - Transverse_Avg." ),
+		:Name( "<Sweep From>" ),
+		:Name( "<Sweep To>" ),
+		:Name( "N-RTN-KURT - Production_Avg." ),
+		:Name( "N-RTN-KSL - Production_Avg." ),
+		:Name( "TDS Resistance (Ohm)" ),
+		:Name( "TDS Contact (Ohm)" ),
+		:Name( "1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Max Noise Amp-Max Field (Oe) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise Amp- Max Field (Oe) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise RMS-Max Field (Oe) - S.M.A.N. II Test_Avg." ),
+		:Name( "6.Barkh. Jump (Signed)(%) - Transverse_Avg. - Production_Avg." ),
+		:Name( "1.DFH.Pk-Pk Amp (uV) - Transverse_Avg." ),
+		:Name( "2.DFH.Pk-Pk Amp (uV) - Transverse_Avg." ),
+		:Name( "1.DFH.Pk-Pk Asym (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Pk-Pk Asym (%) - Transverse_Avg." ),
+		:Name("Reader ELG"),
+		:Name( "SMAN Switch - Production_Avg." ),
+		:PLR
+	),
+	By(
+		:DOE,
+		:Test Name,
+		:Spec_Revision,
+		:Hd,
+		:Part ID,
+		:Wafer,
+		:Date,
+		:Pass,
+		:Lot ID,
+		:SF_Lot_ID,
+		:Temperature,
+		:Test Condition,
+		:Tester SN,
+		:Date Key,
+		:Setup File,
+		:NBO_Tag
+	),
+	Output Table( "HotBQST_Transposed" )
+);
+	
+col=Column(dtFilTransposed,"Row 1"); col<<Set Name("Data");
+col=Column(dtFilTransposed,"Label"); col<<set Name("Parameter");
+//dtFilSummary<<Save("\\wdtbsan02\doe\DataFiles\Reader\"|| DOE ||"_HotBQST_Transposed"||".CSV");
+dtFilTransposed<<save("HotBQST_Transposed.jmp");
+Show("Transposed data done!");
+
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Create split data from "HotBQST_Filtered" for parametric delta change.
+dtFilSplit = dtFiltered << Split(
+	Split By( :Test Condition ),
+	Split(
+		:Name( "1.Contact Resistance (Ohm) - Static Tests_Avg." ),
+		:Name( "1.Aux Resistance (Ohm) - Static Tests_Avg." ),
+		:PinFail,
+		:MRR,
+		:Name( "6.DFH.Amp At Test (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Asym At Test (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Hysteresis (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "MSAS.DFH - Production_Avg." ),
+		:Name( "MaxNoisePower.DFH - Production_Avg." ),
+		:Name( "NoisePower.DFH - Production_Avg." ),
+		:Name( "1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "MNM/Amp" ),
+		:Name( "NM/Amp" ),		
+		:Name( "QSNR.DFH - Production_Avg." ),
+		:Name( "N-DC Noise Rng.DFH - Production_Avg." ),
+		:Name( "Amp Rng.DFH - Production_Avg." ),
+		:Name( "Asym Rng.DFH - Production_Avg." ),
+		:Combo_MRR_Ampl,
+		:Combo SMAN_QSNR,
+		:Hd,
+		:Grade,
+		:Cycles,
+		:Test Time,
+		:Time,
+		:Comments,
+		:Operator ID,
+		:Tester ID,
+		:Spec ID,
+		:Name( "CAL: Res Offs" ),
+		:Name( "CAL: V Offs" ),
+		:Fail Code,
+		:Name( "1.Aux Voltage (mV) - Static Tests_Avg." ),
+		:Name( "1.Pin Failure - Static Tests_Avg." ),
+		:Name( "1.WR Resistance (Ohm) - Static Tests_Avg." ),
+		:Name( "1.Write Fault Reg - Static Tests_Avg." ),
+		:Name( "1.Read Fault Reg - Static Tests_Avg." ),
+		:Name( "1.DFH.Amp At Test (µV) - Transverse_Avg." ),
+		:Name( "2.DFH.Amp At Test (µV) - Transverse_Avg." ),
+		:Name( "1.DFH.Asym At Test (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Asym At Test (%) - Transverse_Avg." ),
+		:Name( "1.DFH.Barkh. Jump (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Barkh. Jump (%) - Transverse_Avg." ),
+		:Name( "1.DFH.Hysteresis (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Hysteresis (%) - Transverse_Avg." ),
+		:Name( "1.DFH.Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "2.DFH.Slope (µV/Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump (%) - Transverse_Max." ),
+		:Name( "6.DFH.Barkh Jump (Signed) (uV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. At Test/Amp At Test (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump At Test (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Fwd (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Fwd At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Rev (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump Rev At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Barkh. Jump At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Measure At (Oe) - Transverse_Avg." ),
+		:Name( "6.DFH.Pk-Pk Amp (uV) - Transverse_Avg." ),
+		:Name( "6.DFH.Pk-Pk Asym (%) - Transverse_Avg." ),
+		:Name( "6.DFH.Resistance (Ohms) - Transverse_Avg." ),
+		:Name( "6.DFH.Bias Current (mA) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Hyst (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Slope Amp (µV) - Transverse_Avg." ),
+		:Name( "6.DFH.Max Slope (Signed) (µV/Oe) - Transverse_Avg." ),
+		:Name( "1.DFH.Max Slope (Signed) (µV/Oe) - Transverse_Avg." ),
+		:Name( "2.DFH.Max Slope (Signed) (µV/Oe) - Transverse_Avg." ),
+		:Name( "0 bias.Max Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "0 bias.Max Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "0 bias.Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "0 bias.Noise Amp (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "0 bias.Noise RMS (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "0 bias.Noise RMS (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Avg." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Min." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Max." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Range" ),
+		:Name( "1.DFH.Amp RMS (µV) - DC Noise_Avg." ),
+		:Name( "1.DFH.Amp (uV) - DC Noise_Std." ),
+		:Name( "1.DFH.Kurtosis - DC Noise_Avg." ),
+		:Name( "1.DFH.KSL - DC Noise_Avg." ),
+		:Name( "MRR@end" ),
+		:Name( "6.DFH.Delta R/R (%) - Transverse_Avg." ),
+		:Name( "<Sweep From>" ),
+		:Name( "<Sweep To>" ),
+		:Name( "<Sweep From> 2" ),
+		:Name( "<Sweep To> 2" ),
+		:Name( "<Sweep From> 3" ),
+		:Name( "<Sweep To> 3" ),
+		:Name( "N-RTN-KURT - Production_Avg." ),
+		:Name( "N-RTN-KSL - Production_Avg." ),
+		:Name( "TDS Resistance (Ohm)" ),
+		:Name( "TDS Contact (Ohm)" ),
+		:Name( "Probe ID - Production_Avg." ),
+		:Name( "Start Date - Production_Avg." ),
+		:Name( "Usage (times) - Production_Avg." ),
+		:Name( "1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Max." ),
+		:Name( "1.DFH.Max Noise Amp-Max Field (Oe) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise Amp- Max Field (Oe) - S.M.A.N. II Test_Avg." ),
+		:Name( "1.DFH.Noise RMS-Max Field (Oe) - S.M.A.N. II Test_Avg." ),
+		:Name( "6.Barkh. Jump (Signed)(%) - Transverse_Avg. - Production_Avg." ),
+		:Name( "DFH.QSNR0 - Production_Avg." ),
+		:Name( "DFH.NoisePower0 - Production_Avg." ),
+		:Name( "DFH.MaxNoisePower0 - Production_Avg." ),
+		:Name( "1.DFH.Pk-Pk Amp (uV) - Transverse_Avg." ),
+		:Name( "2.DFH.Pk-Pk Amp (uV) - Transverse_Avg." ),
+		:Name( "1.DFH.Pk-Pk Asym (%) - Transverse_Avg." ),
+		:Name( "2.DFH.Pk-Pk Asym (%) - Transverse_Avg." ),
+		:Reader ELG,
+		:Name( "SMAN Switch - Production_Avg." ),
+		:PLR
+	),
+	Group( :DOE, :Test Name, :Spec_Revision, :Part ID, :Wafer, :SF_Lot_ID, :NBO_Tag ),
+	Output Table( "HotBQST_Split" ),
+	Remaining Columns( Drop All ),
+	Copy formula( 0 )
+);
+Show("Split data done!");
+
+//_____________________________________________________________________________________________________________________________________________________________________
+//Add parametric delta change and t-Test variance plots.
+dtFilSplit<<NewColumn("d_MRR",Formula(:Name("MRR 80") - :Name("MRR 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_MRR%",Formula((:d_MRR/:Name("MRR 25")) * 100),EvalFormula);
+dtFilSplit<<NewColumn("d_Amp",Formula(:Name("6.DFH.Amp At Test (µV) - Transverse_Avg. 80") - :Name("6.DFH.Amp At Test (µV) - Transverse_Avg. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_Amp%",Formula((:d_Amp/:Name("6.DFH.Amp At Test (µV) - Transverse_Avg. 25")) * 100),EvalFormula);
+dtFilSplit<<NewColumn("d_Asym",Formula(:Name( "6.DFH.Asym At Test (%) - Transverse_Avg. 80" ) - :Name( "6.DFH.Asym At Test (%) - Transverse_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_Barkh",Formula(:Name( "6.DFH.Barkh. Jump (%) - Transverse_Avg. 80" ) - :Name( "6.DFH.Barkh. Jump (%) - Transverse_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_Hyst",Formula(:Name( "6.DFH.Hysteresis (%) - Transverse_Avg. 80" ) - :Name( "6.DFH.Hysteresis (%) - Transverse_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_Slope",Formula(:Name( "6.DFH.Slope (µV/Oe) - Transverse_Avg. 80" ) - :Name( "6.DFH.Slope (µV/Oe) - Transverse_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_Max_slope",Formula(:Name( "6.DFH.Max Slope (µV/Oe) - Transverse_Avg. 80" ) - :Name( "6.DFH.Max Slope (µV/Oe) - Transverse_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_MSAS",Formula(:Name( "MSAS.DFH - Production_Avg. 80" ) - :Name( "MSAS.DFH - Production_Avg. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_MNP",Formula(:Name( "MaxNoisePower.DFH - Production_Avg. 80" ) - :Name( "MaxNoisePower.DFH - Production_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_NP",Formula(:Name( "NoisePower.DFH - Production_Avg. 80" ) - :Name( "NoisePower.DFH - Production_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_Noise_RMS",Formula(:Name("1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Avg. 80") - :Name("1.DFH.Noise RMS (µV) - S.M.A.N. II Test_Avg. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_MaxNoiseMax",Formula(:Name( "1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max. 80" ) - :Name( "1.DFH.Max Noise Amp (µV) - S.M.A.N. II Test_Max. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_NoiseMax",Formula(:Name( "1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max. 80" ) - :Name( "1.DFH.Noise Amp (µV) - S.M.A.N. II Test_Max. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_MNM/Amp",Formula(:Name("MNM/Amp 80") - :Name("MNM/Amp 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_NM/Amp",Formula(:Name("NM/Amp 80") - :Name("NM/Amp 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_QSNR",Formula(:Name("QSNR.DFH - Production_Avg. 80") - :Name("QSNR.DFH - Production_Avg. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_N_DC_noise",Formula(:Name( "N-DC Noise Rng.DFH - Production_Avg. 80" ) - :Name( "N-DC Noise Rng.DFH - Production_Avg. 25" )),EvalFormula);
+dtFilSplit<<NewColumn("d_AmpRng",Formula(:Name( "Amp Rng.DFH - Production_Avg. 80" ) - :Name("Amp Rng.DFH - Production_Avg. 25")),EvalFormula);
+dtFilSplit<<NewColumn("d_AsymRng",Formula(:Name( "Asym Rng.DFH - Production_Avg. 80" ) - :Name("Asym Rng.DFH - Production_Avg. 25")),EvalFormula);
+dtFilSplit<<NewColumn("Test_Group",Formula(:Wafer || "_" || :NBO_Tag),EvalFormula);
+
+
+dtFilSplit<<Move Selected Columns({"d_MRR"},After("NBO_Tag"));
+dtFilSplit<<Move Selected Columns({"d_MRR%"}, After("d_MRR"));
+dtFilSplit<<Move Selected Columns({"d_Amp"}, After("d_MRR%"));
+dtFilSplit<<Move Selected Columns({"d_Amp%"}, After("d_Amp"));
+dtFilSplit<<Move Selected Columns({"d_Asym"}, After("d_Amp%"));
+dtFilSplit<<Move Selected Columns({"d_Barkh"}, After("d_Asym"));
+dtFilSplit<<Move Selected Columns({"d_Hyst"}, After("d_Barkh"));
+dtFilSplit<<Move Selected Columns({"d_Slope"}, After("d_Hyst"));
+dtFilSplit<<Move Selected Columns({"d_Max_slope"}, After("d_Slope"));
+dtFilSplit<<Move Selected Columns({"d_MSAS"}, After("d_Max_slope"));
+dtFilSplit<<Move Selected Columns({"d_MNP"}, After("d_MSAS"));
+dtFilSplit<<Move Selected Columns({"d_NP"}, After("d_MNP"));
+dtFilSplit<<Move Selected Columns({"d_Noise_RMS"}, After("d_NP"));
+dtFilSplit<<Move Selected Columns({"d_MaxNoiseMax"}, After("d_Noise_RMS"));
+dtFilSplit<<Move Selected Columns({"d_NoiseMax"}, After("d_MaxNoiseMax"));
+dtFilSplit<<Move Selected Columns({"d_MNM/Amp"}, After("d_MaxNoiseMax"));
+dtFilSplit<<Move Selected Columns({"d_NM/Amp"}, After("d_MNM/Amp"));
+dtFilSplit<<Move Selected Columns({"d_QSNR"}, After("d_NM/Amp"));
+dtFilSplit<<Move Selected Columns({"d_N_DC_noise"}, After("d_QSNR"));
+dtFilSplit<<Move Selected Columns({"d_AmpRng"}, After("d_N_DC_noise"));
+dtFilSplit<<Move Selected Columns({"d_AsymRng"}, After("d_AmpRng"));
+dtFilSplit<<save("HotBQST_Split.jmp");
+
+chartParamChange=dtFilSplit<<Oneway(
+	Y(	:d_MRR,
+		:d_MRR%,
+		:d_Amp,
+		:d_Amp%,
+		:d_Asym,
+		:d_Barkh,
+		:d_Hyst,
+		:d_Slope,
+		:d_Max_slope,
+		:d_MSAS,
+		:d_MNP,
+		:d_NP,
+		:d_Noise_RMS,
+		:d_MaxNoiseMax,
+		:d_NoiseMax,
+		:Name("d_MNM/Amp"),
+		:Name("d_NM/Amp"),
+		:d_QSNR,
+		:d_N_DC_noise,
+		:d_AmpRng,
+		:d_AsymRng
+	),
+	X( :Test_Group ),
+	All Pairs(
+		1,
+		Confidence Quantile( 0 ),
+		LSD Threshold Matrix( 0 ),
+		Ordered Differences Report( 0 )
+	),
+	Unequal Variances( 1 ),
+	Box Plots( 1 ),
+	Mean Diamonds( 1 ),
+	Std Dev Lines( 1 ),
+	Comparison Circles( 1 ),
+	X Axis Proportional( 0 ),
+);
+
+dtParamChange=dtFilSplit<< Summary(
+	Group( :DOE, :Test Name, :Spec_Revision, :Wafer, :SF_Lot_ID, :NBO_Tag ),
+	Mean( :d_MRR ),
+	Mean( :d_MRR% ),
+	Mean( :d_Amp ),
+	Mean( :d_Amp% ),
+	Mean( :d_Asym ),
+	Mean( :d_Barkh ),
+	Mean( :d_Hyst ),
+	Mean( :d_Slope ),
+	Mean( :d_Max_slope ),
+	Mean( :d_MSAS ),
+	Mean( :d_MNP ),
+	Mean( :d_NP ),
+	Mean( :d_Noise_RMS ),
+	Mean( :d_MaxNoiseMax ),
+	Mean( :d_NoiseMax ),
+	Mean( :Name("d_MNM/Amp") ),
+	Mean( :Name("d_NM/Amp") ),
+	Mean( :d_QSNR ),
+	Mean( :d_N_DC_noise ),
+	Mean( :d_AmpRng ),
+	Mean( :d_AsymRng ),
+	Output table name( "HotBQST_Parametric_Change" )
+);
+Show("Parametric delta change table done!");

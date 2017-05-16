@@ -1,0 +1,255 @@
+﻿p = pick Directory("Select a Folder");
+f = Files In Directory(p);
+
+/* Removes the file names from the list f which are not CSV files */
+for(j=1,j<=N Items(f),j++, 
+	If (Substr(f[j],Length(f[j])-2,3)!= "CSV", 
+		RemoveFrom(f,j,1);
+		j=j-1;
+	);
+
+);
+
+A = {}; /* creates a empty list for storing the names of each data table */
+
+/*Opens each one of the CSV files and deletes all unwanted rows */
+for(j=1,j<=N Items(f),j++, 
+	CSV = Open(Concat(p,f[j]), End of Field(comma), Labels(1), Column Names Start(3), Data Starts(4));
+
+	InsertInto(A,CSV);
+
+	CSV<<Select Where(:Hd =="System");
+	CSV<<delete rows;
+	CSV<<Select Where(:Part ID =="Part ID");
+	CSV<<delete rows;
+);
+
+dt1=New Table();
+dt2 = dt1<<Concatenate(A, Output Table name("DTemp Raw Data"));
+dt2<<Delete Columns("Column 1");
+Close(dt1, No Save);
+
+/* Converts following columns from Character to Numeric type */
+column ("MRR") <<data type(Numeric)<<Modeling type(Continuous);
+column ("6.Amp At Test (µV) - Transverse_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("6.Asym At Test (%) - Transverse_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("6.Barkh. Jump (%) - Transverse_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("6.Hysteresis (%) - Transverse_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("6.Slope (µV/Oe) - Transverse_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("Amp Rng - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("Asym Rng - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("QSNR - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("MSAS - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("N-DC Noise Rng - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("NoisePower - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+column ("MaxNoisePower - Production_Avg.") <<data type(Numeric)<<Modeling type(Continuous);
+
+dt2 << delete columns("Date Key");
+dt2 << delete columns("Setup File");
+dt2 << delete columns("Grade");
+dt2 << delete columns("Cycles");
+dt2 << delete columns("Test Time");
+dt2 << delete columns("Date");
+dt2 << delete columns("Time");
+dt2 << delete columns("Comments");
+dt2 << delete columns("Operator ID");
+dt2 << delete columns("Tester ID");
+dt2 << delete columns("Spec ID");
+dt2 << delete columns("Tester SN");
+dt2 << delete columns("CAL: Res Offs");
+dt2 << delete columns("CAL: V Offs");
+dt2 << delete columns("Fail Code");
+dt2 << delete columns("1.Aux Resistance (Ohm) - Static Tests_Avg.");
+dt2 << delete columns("1.Aux Voltage (mV) - Static Tests_Avg.");
+dt2 << delete columns("Continuity");
+dt2 << delete columns("1.Pin Failure - Static Tests_Avg.");
+dt2 << delete columns("1.WR Resistance (Ohm) - Static Tests_Avg.");
+dt2 << delete columns("1.Read Fault - Static Tests_Avg.");
+dt2 << delete columns("1.Write Fault - Static Tests_Avg.");
+dt2 << delete columns("1.Amp At Test (µV) - Transverse_Avg.");
+dt2 << delete columns("2.Amp At Test (µV) - Transverse_Avg.");
+dt2 << delete columns("1.Asym At Test (%) - Transverse_Avg.");
+dt2 << delete columns("2.Asym At Test (%) - Transverse_Avg.");
+dt2 << delete columns("6.Max Slope (µV/Oe) - Transverse_Avg.");
+dt2 << delete columns("6.Measure At (Oe) - Transverse_Avg.");
+dt2 << delete columns("6.Pk-Pk Amp (uV) - Transverse_Avg.");
+dt2 << delete columns("6.Pk-Pk Asym (%) - Transverse_Avg.");
+dt2 << delete columns("6.Resistance (Ohms) - Transverse_Avg.");
+dt2 << delete columns("6.Bias Current (mA) - Transverse_Avg.");
+dt2 << delete columns("1.Max Noise Amp (µV) - S.M.A.N. II Test_Avg.");
+dt2 << delete columns("1.Max Noise Amp (µV) - S.M.A.N. II Test_Max.");
+dt2 << delete columns("1.Noise Amp (µV) - S.M.A.N. II Test_Avg.");
+dt2 << delete columns("1.Noise Amp (µV) - S.M.A.N. II Test_Max.");
+dt2 << delete columns("1.Noise RMS (µV) - S.M.A.N. II Test_Avg.");
+dt2 << delete columns("1.Noise RMS (µV) - S.M.A.N. II Test_Max.");
+dt2 << delete columns("0 bias.Max Noise Amp (µV) - S.M.A.N. II Test_Avg.");
+dt2 << delete columns("0 bias.Max Noise Amp (µV) - S.M.A.N. II Test_Max.");
+dt2 << delete columns("0 bias.Noise Amp (µV) - S.M.A.N. II Test_Avg.");
+dt2 << delete columns("0 bias.Noise Amp (µV) - S.M.A.N. II Test_Max.");
+dt2 << delete columns("0 bias.Noise RMS (µV) - S.M.A.N. II Test_Avg.");
+dt2 << delete columns("0 bias.Noise RMS (µV) - S.M.A.N. II Test_Max.");
+dt2 << delete columns("7.Amp At Test (µV) - Transverse_Avg.");
+dt2 << delete columns("7.Amp At Test (µV) - Transverse_Min.");
+dt2 << delete columns("7.Amp At Test (µV) - Transverse_Max.");
+dt2 << delete columns("7.Asym At Test (%) - Transverse_Avg.");
+dt2 << delete columns("7.Asym At Test (%) - Transverse_Min.");
+dt2 << delete columns("7.Asym At Test (%) - Transverse_Max.");
+dt2 << delete columns("7.Barkh. Jump (%) - Transverse_Avg.");
+dt2 << delete columns("7.Barkh. Jump (%) - Transverse_Max.");
+dt2 << delete columns("7.Hysteresis (%) - Transverse_Avg.");
+dt2 << delete columns("7.Hysteresis (%) - Transverse_Max.");
+dt2 << delete columns("7.Max Slope (µV/Oe) - Transverse_Avg.");
+dt2 << delete columns("7.Max Slope (µV/Oe) - Transverse_Min.");
+dt2 << delete columns("7.Max Slope (µV/Oe) - Transverse_Max.");
+dt2 << delete columns("7.Max Slope (µV/Oe) - Transverse_Range");
+dt2 << delete columns("7.Measure At (Oe) - Transverse_Avg.");
+dt2 << delete columns("7.Pk-Pk Amp (uV) - Transverse_Avg.");
+dt2 << delete columns("7.Pk-Pk Asym (%) - Transverse_Avg.");
+dt2 << delete columns("7.Resistance (Ohms) - Transverse_Avg.");
+dt2 << delete columns("7.Bias Current (mA) - Transverse_Avg.");
+dt2 << delete columns("7.Slope (µV/Oe) - Transverse_Avg.");
+dt2 << delete columns("7.Slope (µV/Oe) - Transverse_Min.");
+dt2 << delete columns("7.Slope (µV/Oe) - Transverse_Max.");
+dt2 << delete columns("7.Barkh. Jump Fwd At (Oe) - Transverse_Avg.");
+dt2 << delete columns("7.Barkh. Jump Fwd At (Oe) - Transverse_Std.");
+dt2 << delete columns("7.Barkh. Jump Rev At (Oe) - Transverse_Avg.");
+dt2 << delete columns("7.Barkh. Jump Rev At (Oe) - Transverse_Std.");
+dt2 << delete columns("1.Test 2 Resistance 0 21 - Quasi-Static Tests_Avg.");
+dt2 << delete columns("1.Test 3 Resistance 0 0 - Quasi-Static Tests_Avg.");
+dt2 << delete columns("1.Amp (uV) - DC Noise_Avg.");
+dt2 << delete columns("1.Amp (uV) - DC Noise_Min.");
+dt2 << delete columns("1.Amp (uV) - DC Noise_Max.");
+dt2 << delete columns("1.Amp (uV) - DC Noise_Range");
+dt2 << delete columns("1.Amp RMS (µV) - DC Noise_Avg.");
+dt2 << delete columns("1.Amp (uV) - DC Noise_Std.");
+dt2 << delete columns("1.Kurtosis - DC Noise_Avg.");
+dt2 << delete columns("1.KSL - DC Noise_Avg.");
+dt2 << delete columns("1.Amp Range (?V) - Windowed DC Noise_Range");
+dt2 << delete columns("1.Amp Range (?V) - Windowed DC Noise_Avg.");
+dt2 << delete columns("1.Amp Avg (?V) - Windowed DC Noise_Range");
+dt2 << delete columns("1.Amp STDev - Windowed DC Noise_Max.");
+dt2 << delete columns("1.Amp STDev - Windowed DC Noise_Avg.");
+dt2 << delete columns("1.Amp Min (?V) - Windowed DC Noise_Avg.");
+dt2 << delete columns("1.Amp Max (?V) - Windowed DC Noise_Avg.");
+dt2 << delete columns("1.Amp RMin - Windowed DC Noise_Avg.");
+dt2 << delete columns("1.Amp RMax - Windowed DC Noise_Avg.");
+dt2 << delete columns("5xRMS.Popcorn - Popcorn_Max.");
+dt2 << delete columns("7xRMS.Popcorn - Popcorn_Max.");
+dt2 << delete columns("20.Popcorn - Popcorn_Max.");
+dt2 << delete columns("10.Popcorn - Popcorn_Max.");
+dt2 << delete columns("AmpRng2 - Production_Avg.");
+dt2 << delete columns("AsymRng2 - Production_Avg.");
+dt2 << delete columns("BJ ForLoc - Production_Avg.");
+dt2 << delete columns("BJ RevLoc - Production_Avg.");
+dt2 << delete columns("VCR - Production_Avg.");
+dt2 << delete columns("N-Max Noise-avg - Production_Avg.");
+dt2 << delete columns("N-Max Noise-max - Production_Avg.");
+dt2 << delete columns("N-Noise Amp-max - Production_Avg.");
+dt2 << delete columns("N-Noise RMS-max - Production_Avg.");
+dt2 << delete columns("N_MRR_NAM - Production_Avg.");
+dt2 << delete columns("DC_min_at_0 - Production_Avg.");
+dt2 << delete columns("DC_max_at_0 - Production_Avg.");
+dt2 << delete columns("SMAN RMS corrected - Production_Avg.");
+dt2 << delete columns("Probe ID - Production_Avg.");
+dt2 << delete columns("Start Date - Production_Avg.");
+dt2 << delete columns("Usage (times) - Production_Avg.");
+dt2 << delete columns("MSS - Production_Avg.");
+dt2 << delete columns("MRR_Rp");
+dt2 << delete columns("MRR@0.1mA");
+dt2 << delete columns("MRR@end");
+dt2 << delete columns("Popcorn rate_10_AmpTh - Production_Avg.");
+dt2 << delete columns("Popcorn rate_20_AmpTh - Production_Avg.");
+dt2 << delete columns("6.Delta R/R (%) - Transverse_Avg.");
+dt2 << delete columns("7.Delta R/R (%) - Transverse_Avg.");
+dt2 << delete columns("ELG@0.25mA");
+dt2 << delete columns("<Sweep From>");
+dt2 << delete columns("<Sweep To>");
+dt2 << delete columns("<Sweep From> 2");
+dt2 << delete columns("<Sweep To> 2");
+dt2 << delete columns("<Sweep From> 3");
+dt2 << delete columns("<Sweep To> 3");
+dt2 << delete columns("<Sweep From> 4");
+dt2 << delete columns("<Sweep To> 4");
+dt2 << delete columns("1.Amp (uV) - DC Noise_Std. 2");
+dt2 << delete columns("1.Amp RMS (?V) - DC Noise_Std.");
+dt2 << delete columns("N-RTN-KURT - Production_Avg.");
+dt2 << delete columns("N-RTN-KSL - Production_Avg.");
+
+
+
+
+<<new column("Pass")<<data type(Numeric)<<Modeling type(Continuous);
+column("Pass")<<Formula(If(:MRR < 250 | :MRR > 950 | 
+:Name("6.Amp At Test (µV) - Transverse_Avg.") < 3000 | :Name("6.Amp At Test (µV) - Transverse_Avg.") > 40000 | 
+:Name("6.Asym At Test (%) - Transverse_Avg.") < -35 | :Name("6.Asym At Test (%) - Transverse_Avg.") > 35 | 
+:Name("6.Barkh. Jump (%) - Transverse_Avg.") > 15 |
+ :Name("6.Hysteresis (%) - Transverse_Avg.") > 15 | 
+ :Name("Amp Rng - Production_Avg.") > 18 | 
+ :Name("Asym Rng - Production_Avg.") > 18 | 
+ :Name("QSNR - Production_Avg.") < 17 | 
+ :Name("MSAS - Production_Avg.") > 6.5 | 
+ :Name("NoisePower - Production_Avg.") > 3.5 | 
+ :Name("MaxNoisePower - Production_Avg.") > 10 | 
+ :Name("N-DC Noise Rng - Production_Avg.") > 25 | 
+ :Name("6.Slope (µV/Oe) - Transverse_Avg.") <= 0.5 | :Name("6.Slope (µV/Oe) - Transverse_Avg.") >= 50, 0, 1));
+
+ 
+ <<newcolumn("Wafer")<<data type(Character)<<Modeling type(Nominal)<<Formula(Substr(:Part ID, 1, 4));
+ 
+ <<newcolumn("DFH_dT")<<data type(Numeric)<<Modeling type(Continuous)
+ <<Formula(If(Substr(:Lot, 10, 3) == "DS1", 0, 
+ Substr(:Lot, 10, 3) == "DS2", 9, 
+ Substr(:Lot, 10, 3) == "DS3", 16, 
+ Substr(:Lot, 10, 3) == "DS4", 50, 
+ Substr(:Lot, 10, 3) == "DS5", 70, 
+ Substr(:Lot, 10, 3) == "DS6", 85, 
+ Substr(:Lot, 10, 3) == "DS7", 0.1));
+ 
+dt2<< Run Formulas;
+
+/* Selects initial failing heads at DFH = 0 volts */
+dt2<< Select Where(:Name("Pass") == 0 & (:Name("DFH_dT") == 0 ));
+dt3 = dt2<< Subset (Suppress formula evaluation( 0 ),
+Output Table Name("dTemp_Initial_Fails"));
+
+
+flg = 0;
+/*for(j=1, j<=N Items(f),j++, 
+	If ((NCol(A[1]) != NCol(A[j])) & flg == 0,
+	flg = 1;
+	);
+);*/
+
+If (flg == 0, 
+	for(j=1, j<=N Items(f),j++, 
+	Close(A[j], No Save)
+	);
+);
+
+
+/* Re-ordering columns */
+dt2<< Move Selected Columns({"Pass"}, After("Part ID"));
+dt2<< Move Selected Columns({"Lot"}, After("Pass"));
+dt2<< Move Selected Columns({"MRR"}, After("Lot"));
+dt2<< Move Selected Columns({"6.Amp At Test (µV) - Transverse_Avg."}, After("MRR"));
+dt2<< Move Selected Columns({"6.Asym At Test (%) - Transverse_Avg."}, After("6.Amp At Test (µV) - Transverse_Avg."));
+dt2<< Move Selected Columns({"6.Barkh. Jump (%) - Transverse_Avg."}, After("6.Asym At Test (%) - Transverse_Avg."));
+dt2<< Move Selected Columns({"6.Hysteresis (%) - Transverse_Avg."}, After("6.Barkh. Jump (%) - Transverse_Avg."));
+dt2<< Move Selected Columns({"6.Slope (µV/Oe) - Transverse_Avg."}, After("6.Hysteresis (%) - Transverse_Avg."));
+dt2<< Move Selected Columns({"MSAS - Production_Avg."}, After("6.Slope (µV/Oe) - Transverse_Avg."));
+dt2<< Move Selected Columns({"MaxNoisePower - Production_Avg."}, After("MSAS - Production_Avg."));
+dt2<< Move Selected Columns({"NoisePower - Production_Avg."}, After("MaxNoisePower - Production_Avg."));
+dt2<< Move Selected Columns({"QSNR - Production_Avg."}, After("NoisePower - Production_Avg."));
+dt2<< Move Selected Columns({"N-DC Noise Rng - Production_Avg."}, After("QSNR - Production_Avg."));
+dt2<< Move Selected Columns({"Amp Rng - Production_Avg."}, After("N-DC Noise Rng - Production_Avg."));
+dt2<< Move Selected Columns({"Asym Rng - Production_Avg."}, After("Amp Rng - Production_Avg."));
+dt2<< Move Selected Columns({"DFH.QSNR - Production_Avg."}, After("Asym Rng - Production_Avg."));
+dt2<< Move Selected Columns({"DFH.NoisePower - Production_Avg."}, After("DFH.QSNR - Production_Avg."));
+dt2<< Move Selected Columns({"DFH.MaxNoisePower - Production_Avg."}, After("DFH.NoisePower - Production_Avg."));
+dt2<< Move Selected Columns({"Wafer"}, After("Part ID"));
+dt2<< Move Selected Columns({"DFH_dT"}, After("Lot"));
+
+
+/*dt2 << Save(""); *//*Prompts user to perform the save operation*/
+
+/*dt2 << save("Z:\DevelopmentCharacterization\RavindraKemshetti\2013\M11N\Additional Isothermal and dTemp\DTemp Raw Data.JMP");*/ /* automatically saves the file*/
