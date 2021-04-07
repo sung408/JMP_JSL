@@ -1,0 +1,168 @@
+/// *** This is for lifetime data analysis
+
+
+dt = currentdatatable();
+
+
+dt << Select Where( :NON_INSTALLED_REASON!="Install" );
+dt << delete rows;
+
+
+
+
+
+col_name_list = dt << get column names(string);
+
+dt <<Sort(replace table,
+By(APPLY_DATE),
+Order(Ascending )
+); 
+
+dt<<Sort(replace table,
+By(MACHINE_NO),
+Order(Descending )
+);
+
+
+
+
+
+new_column = "DATA PULLED DATE" ;
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, numeric, continuous,Format( "y/m/d", 10 ),input format( "y/m/d"),
+            formula(Date DMY(19, 10, 2020))         
+          
+      );
+);
+
+
+
+
+ 
+new_column = "Fail Date (Apply Date lag -1)";
+
+if (contains(col_name_list, new_column),
+    column(new_column)<< Eval Formula;
+      );
+
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, numeric, continuous,Format( "y/m/d", 10 ),input format( "y/m/d"),
+            formula(Lag(:APPLY_DATE, -1))         
+          
+      );
+);
+
+
+
+
+new_column = "machine lag-1";
+
+if (contains(col_name_list, new_column),
+    column(new_column)<< Eval Formula;
+      );
+
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, character,"nominal",
+            formula(Lag(:MACHINE_NO, -1)) ;        
+          
+    );
+	
+);
+
+ 
+new_column = "CENSOR";
+
+if (contains(col_name_list, new_column),
+    column(new_column)<< Eval Formula;
+      );
+
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, character,"nominal",
+            formula(If(
+	:MACHINE_NO == Lag( :MACHINE_NO, -1 ) & (Lag( :PARTS_REQUEST_REASON_CODE, -1 ) == "Trouble Shooting" |
+	Lag( :PARTS_REQUEST_REASON_CODE, -1 ) == "DOA" | Lag( :PARTS_REQUEST_REASON_CODE, -1 ) == "DOI"),
+	"F",
+	"S"
+         )) ;        
+          
+    );
+	
+);
+
+
+
+
+new_column = "TTF";
+
+if (contains(col_name_list, new_column),
+    column(new_column)<< Eval Formula;
+      );
+
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, numeric,"Continuous",
+            formula(If( :MACHINE_NO == Lag( :MACHINE_NO, -1 ),
+	Date Difference( :INSTALLED_DATE, :Name( "Fail Date (Apply Date lag -1)" ), "DAY" ) / 365,
+	Date Difference( :INSTALLED_DATE, :DATA PULLED DATE, "DAY" ) / 365
+)) ;        
+          
+    );
+);
+
+
+
+
+
+new_column = "WARRANTY";
+
+if (contains(col_name_list, new_column),
+    column(new_column)<< Eval Formula;
+      );
+
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, character,"nominal",
+            formula(If(
+	:STATUS_NAME == "Out of Warranty_Without SVC", "OoW_WO_SVC",
+	:STATUS_NAME == "Out of Warranty_SVC" | :STATUS_NAME == "Warranty", "Warranty/OoW SVC",
+	"na"
+)) ;        
+          
+    );
+	
+);
+
+
+/// Hide  & exclude
+
+dt << Select Where( :TTF<=0 );
+dt << Exclude(1);
+dt << hide(1);
+
+dt << Select Where( :Name("STATUS_NAME")=="Tool Return" | :Name("STATUS_NAME")=="Evaluation" );
+dt << Exclude(1);
+dt << hide(1);
+
+dt << Select Where( :Name("PARTS_REQUEST_REASON_CODE")=="DOA" );
+dt << Exclude(1);
+dt << hide(1);
+
+// remove formula
+:TTF << Delete Formula;
+:name("Fail Date (Apply Date lag -1)")<<delete formula;
+:name("machine lag-1")<<delete formula;
+:name("CENSOR")<<delete formula;
+:name("WARRANTY")<<delete formula;
+
+
+New Window( "Message", modal,
+	H List Box(
+		Spacer Box( size( 5, 5 ) ),
+		
+		Text Box( "Confirm DATA PULLED DATE !!!" )
+	)
+);
