@@ -13,12 +13,27 @@ if (!contains(col_name_list, new_column),
       	
      );
 
+fail_flag = 0;
+
+dt = currentdatatable();
+BD_curr=0.00001;
+
+col_name_list = dt << get column names(string);
+new_column = "F_S";
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, character,"nominal");
+      	
+      	
+     );
+
 for each row(
 
-		If( fail_flag==0 & Abs( Lag( :raw_current_amp, -1 ) > BD_curr ) & Abs( :raw_current_amp < BD_curr ),
+	If( fail_flag==0 & Abs( Lag( :raw_current_amp, -1 ) > BD_curr ) & Abs( :raw_current_amp < BD_curr ),
 	        :F_S="F"; fail_flag=1,
 	        :F_S=char(fail_flag)
           );
+
           
          if (
 			lag(:probe_station_rail_id,-1)!=:probe_station_rail_id & fail_flag==0, 
@@ -31,4 +46,3 @@ for each row(
 			fail_flag=0
 			);  
 	 );
-
