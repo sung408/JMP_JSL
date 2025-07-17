@@ -15,7 +15,7 @@ if (!contains(col_name_list, new_column),
 
 for each row(
 0
-		If( fail_flag==0 & Abs( Lag( :raw_current_amp, -1 ) > 0.000001 ) & Abs( :raw_current_amp < 0.000001 ),
+		If( fail_flag==0 & Abs( Lag( :raw_current_amp, -1 ) > BD_curr ) & Abs( :raw_current_amp < BD_curr ),
 	        :F_S="F"; fail_flag=1,
 	        :F_S=char(fail_flag)
           );
