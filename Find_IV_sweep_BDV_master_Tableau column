@@ -1,0 +1,48 @@
+
+fail_flag = 0;
+
+dt = currentdatatable();
+BD_curr=0.00001;
+
+col_name_list = dt << get column names(string);
+new_column = "F_S";
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, character,"nominal");
+      	
+      	
+     );
+
+fail_flag = 0;
+
+dt = currentdatatable();
+BD_curr=0.00001;
+
+col_name_list = dt << get column names(string);
+new_column = "F_S";
+ 
+if (!contains(col_name_list, new_column),
+      dt <<New Column(new_column, character,"nominal");
+      	
+      	
+     );
+
+for each row(
+
+	If( fail_flag==0 & Abs( Lag( :Name("Raw Current Amp"), -1 ) > BD_curr ) & Abs( :Name("Raw Current Amp") < BD_curr ),
+	        :F_S="F"; fail_flag=1,
+	        :F_S=char(fail_flag)
+          );
+
+          
+         if (
+			lag(:Name("Probe Station Rail Id"),-1)!=:Name("Probe Station Rail Id") & fail_flag==0, 
+			:F_S="S"
+			);
+			
+					
+		  if (
+			lag(:Name("Probe Station Rail Id"),-1)!=:Name("Probe Station Rail Id"), 
+			fail_flag=0
+			);  
+	 );
